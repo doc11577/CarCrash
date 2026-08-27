@@ -70,29 +70,77 @@ decision was made in conversation and it isn't written down here, it will be los
 | Build target | **Web** (renamed from WebGL in the Unity 6 line) |
 | Graphics API | **WebGL2 only.** WebGPU stays off — unreliable on Chromebooks. |
 | Input | Input System package (`com.unity.inputsystem`) |
-| Git remote | not yet configured |
+| Git remote | `https://github.com/doc11577/CarCrash.git` (public — required by jsDelivr) |
+| Default branch | `master` |
 
 `Documents` is confirmed **not** OneDrive-redirected, so the project path is safe.
 Do not move it under `C:\Users\ethan\OneDrive\` — OneDrive sync corrupts Unity's `Library/`.
 
 ## Deploy pipeline
 
-Proven approach, copied from the reference game that already runs on these Chromebooks:
+Copied from the reference game that already runs on these Chromebooks.
 
-1. Unity **Web** build, Brotli compression **with decompression fallback**
-   (required — a plain CDN can't serve `Content-Encoding: br`)
-2. Commit build output to a folder in this GitHub repo
-3. Serve the build files via **jsDelivr** (`https://cdn.jsdelivr.net/gh/<user>/<repo>@<commit>/<path>`)
-   - 20 MB per-file limit; current reference build's largest file is ~7.6 MB
-   - Pin to a commit hash, not a branch, so the CDN doesn't serve stale files
-4. Paste the Unity `index.html` (with URLs pointed at jsDelivr) into
-   **Google Sites → Insert → Embed → Embed code**
-5. Google Sites renders it in a sandboxed `*-atari-embeds.googleusercontent.com` iframe
+**Build output goes to `WebBuild/carcrash/`** (gitignored). The folder name sets the output
+filenames, so it must stay `carcrash`. Only the four payload files are copied into
+**`prod/`**, which *is* tracked, because jsDelivr serves from the repo.
+
+Release steps:
+
+```bash
+bash tools/publish.sh          # WebBuild/carcrash/Build -> prod/
+git add prod && git commit -m "..." && git push
+git rev-parse HEAD             # copy this hash
+# paste hash into BUILD_BASE in tools/embed.html
+# re-paste tools/embed.html into Google Sites -> Insert -> Embed -> Embed code
+```
+
+`tools/embed.html` is the page pasted into Google Sites. It is *not* Unity's generated
+`index.html` — it's a hand-written replacement with a progress bar, on-screen error
+reporting (there's no console on a school Chromebook), iframe focus handling, and
+arrow-key scroll suppression.
+
+Non-obvious things that will bite:
+
+- **Pin jsDelivr to a commit hash, never a branch.** Branch URLs are cached hard and will
+  serve a stale build for hours.
+- **Decompression Fallback must stay ON.** jsDelivr can't send `Content-Encoding: br`, so
+  Unity has to decompress in JS. Output named `.unityweb` = fallback on. `.br` = it's off
+  and the game will hang forever at 0%.
+- **The repo must stay public.** jsDelivr cannot read private repos.
+- **jsDelivr caps files at 20 MB.** Watch `carcrash.wasm.unityweb` as the project grows.
+- **Keyboard focus.** Google Sites nests the game two iframes deep; without an explicit
+  focus grab on pointerdown, key input silently does nothing.
 
 It works at school because `sites.google.com` is Workspace-whitelisted and `cdn.jsdelivr.net`
 is a generic CDN that filters don't block. There is no trick beyond that.
 
 **Test the full pipeline on a real school Chromebook before building anything worth losing.**
+
+### Build baseline (smoke test, 2026-08-27)
+
+Brotli, ~10.4 MB total download:
+
+| File | Compressed | Raw |
+| --- | --- | --- |
+| `carcrash.wasm.unityweb` | 6.49 MB | 34.79 MB |
+| `carcrash.data.unityweb` | 3.71 MB | 9.24 MB |
+| `carcrash.framework.js.unityweb` | 0.07 MB | 0.32 MB |
+| `carcrash.loader.js` | 0.11 MB | — |
+
+Reference game for comparison: ~14.7 MB. Watch for regressions against this table.
+
+### Web player settings (verified on disk)
+
+`webGLDecompressionFallback: 1`, `webGLMaximumMemorySize: 512`, `webWasm2023: 1`,
+`managedStrippingLevel: WebGL: 3` (High), `webGLCompressionFormat: 0` (**0 = Brotli** —
+the enum is Brotli, Gzip, Disabled, so 0 is correct), `webGLThreadsSupport: 0` (must stay
+off — threads need COOP/COEP headers Google Sites will never send), `webGLDataCaching: 1`.
+
+`webGLExceptionSupport: 1` (Explicitly Thrown Only) is kept for development stack traces.
+**Drop it to None before shipping** for the speed.
+
+Untested lever if the Chromebook is slow: capping `devicePixelRatio` to 1. HiDPI Chromebooks
+render far more pixels than the GPU can afford. Measure before reaching for it.
 
 ## Game design
 
