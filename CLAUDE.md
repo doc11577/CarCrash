@@ -142,6 +142,43 @@ off — threads need COOP/COEP headers Google Sites will never send), `webGLData
 Untested lever if the Chromebook is slow: capping `devicePixelRatio` to 1. HiDPI Chromebooks
 render far more pixels than the GPU can afford. Measure before reaching for it.
 
+## Roadmap
+
+Live kanban board (add/move/delete cards, saves itself):
+https://claude.ai/code/artifact/1f62aafd-5b63-417b-b9b7-8d035c0a909a
+
+Build order — expensive unknowns first, content last:
+
+1. **Done** — deploy pipeline, repo, player settings, size baseline
+2. **Now** — chase camera rig · arcade vehicle controller · greybox downhill track
+3. **Next** — detachable parts · panel deformation · cheap traffic · scoring/gears ·
+   garage & buy · persistence
+4. **Later** — split-screen 2P · juice · audio · more content · ship pass
+
+### Architecture calls already made
+
+- **Custom raycast suspension, not `WheelCollider`.** Four raycasts per car per physics
+  step instead of PhysX's wheel solver. Cheaper, far more predictable, and arcade feel is
+  the goal rather than simulation.
+- **Traffic is kinematic until struck**, then promoted to a full rigidbody. "Physics on
+  demand" is what makes ~20 cars affordable on integrated graphics.
+- **Mesh deformation is player-car only**, on a low-poly proxy, with a budgeted vertex
+  count per hit. Traffic gets detachable parts but keeps its mesh intact.
+- **Detached debris is pooled and capped.** Lifetime, then sleep, then back to the pool.
+  This is the first system that will tank the frame rate if left unbounded.
+
+### Open calls
+
+- **Colour space** — recommendation: stay **Linear**. Bottleneck will be CPU physics, not
+  fragment shading. Revisit only if the GPU proves to be the wall. Decide before lighting
+  the first real scene; changing it later re-breaks every lighting value.
+- **Device pixel ratio cap** — measure before capping. One-line change, costs sharpness.
+
+### Provisional performance budget
+
+60 FPS target / 30 floor · ≤ 20 MB download · ≤ 40 live rigidbodies · no realtime shadows ·
+no post FX until measured. Revise once there are real Chromebook numbers.
+
 ## Game design
 
 Arcade crash-driving, third-person chase cam.
