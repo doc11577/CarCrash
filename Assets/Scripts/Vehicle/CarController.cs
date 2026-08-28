@@ -40,20 +40,20 @@ public class CarController : MonoBehaviour
 
     [Header("Suspension")]
     [Tooltip("Wheel radius in metres. Also how far below the anchor the wheel sits at full droop.")]
-    public float wheelRadius = 0.34f;
+    public float wheelRadius = 0.48f;
 
     [Tooltip("How far the suspension can compress, in metres.")]
-    public float suspensionTravel = 0.35f;
+    public float suspensionTravel = 0.30f;
 
     [Tooltip("Stiffness. Too low and the car wallows; too high and it skips over bumps.")]
-    public float springStrength = 32000f;
+    public float springStrength = 9000f;
 
     [Tooltip("Bounce absorption. Roughly 8-12% of spring strength is a sane starting point.")]
-    public float damperStrength = 3200f;
+    public float damperStrength = 3000f;
 
     [Header("Engine")]
     [Tooltip("Forward force per powered wheel at full throttle.")]
-    public float enginePower = 4200f;
+    public float enginePower = 3200f;
 
     [Tooltip("Speed in m/s at which the engine stops adding force. 28 m/s is about 100 km/h.")]
     public float topSpeed = 32f;
@@ -88,7 +88,7 @@ public class CarController : MonoBehaviour
 
     [Header("Stability")]
     [Tooltip("Lowers the centre of mass. Without this the car rolls over constantly.")]
-    public Vector3 centreOfMassOffset = new Vector3(0f, -0.45f, 0f);
+    public Vector3 centreOfMassOffset = new Vector3(0f, -0.6f, 0f);
 
     [Tooltip("Downforce at top speed, as a multiple of the car's weight.")]
     [Range(0f, 3f)] public float downforce = 0.9f;
