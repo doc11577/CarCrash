@@ -30,6 +30,9 @@ public class CarController : MonoBehaviour
         [HideInInspector] public float compression;
         [HideInInspector] public float spin;
         [HideInInspector] public Vector3 contactPoint;
+
+        /// <summary>Wheel has come off. No suspension, no drive, no grip on this corner.</summary>
+        [HideInInspector] public bool detached;
     }
 
     [Header("Wheels")]
@@ -165,6 +168,16 @@ public class CarController : MonoBehaviour
     /// <returns>True if this wheel is touching the ground.</returns>
     bool ApplyWheel(Wheel wheel, float throttle, bool handbrake, float dt)
     {
+        // A detached wheel contributes nothing: no spring holding that corner up, no
+        // power through it, no sideways grip. The body drops onto its collider and
+        // starts dragging, which is exactly the behaviour we want.
+        if (wheel.detached)
+        {
+            wheel.grounded = false;
+            wheel.compression = 0f;
+            return false;
+        }
+
         Vector3 origin = wheel.anchor.position;
         Vector3 down = -transform.up;
         float castLength = suspensionTravel + wheelRadius;
@@ -260,6 +273,33 @@ public class CarController : MonoBehaviour
 
         rb.AddTorque(transform.right * (-pitch * airControlTorque));
         rb.AddTorque(transform.forward * (-roll * airControlTorque));
+    }
+
+    /// <summary>
+    /// Knock a wheel off. Returns false if the index is bad or it is already gone.
+    /// </summary>
+    public bool DetachWheel(int index)
+    {
+        if (wheels == null || index < 0 || index >= wheels.Length) return false;
+
+        Wheel wheel = wheels[index];
+        if (wheel == null || wheel.detached) return false;
+
+        wheel.detached = true;
+        if (wheel.visual != null) wheel.visual.gameObject.SetActive(false);
+        return true;
+    }
+
+    /// <summary>How many wheels are still attached.</summary>
+    public int WheelsRemaining()
+    {
+        if (wheels == null) return 0;
+
+        int count = 0;
+        foreach (Wheel wheel in wheels)
+            if (wheel != null && !wheel.detached) count++;
+
+        return count;
     }
 
     void OnDrawGizmosSelected()
