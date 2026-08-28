@@ -166,6 +166,16 @@ Build order — expensive unknowns first, content last:
   count per hit. Traffic gets detachable parts but keeps its mesh intact.
 - **Detached debris is pooled and capped.** Lifetime, then sleep, then back to the pool.
   This is the first system that will tank the frame rate if left unbounded.
+- **The camera takes no player input, ever.** Target platform is a school Chromebook
+  trackpad; any camera the player has to steer is a failure. `ChaseCamera` is fully
+  automatic.
+- **The camera tracks the car's VELOCITY, not its facing.** In a game built around spins
+  and broadside hits, a facing-locked camera whips around and makes people ill. Below
+  `velocityYawThreshold` it falls back to facing so parking still reads correctly, and
+  reversing is special-cased so the view doesn't swing to the boot.
+- **The camera aims at the road ahead, not at the car** (`aimAheadWeight`). This is the
+  actual fix for the reference game's downhill problem — the aim point is ground-projected,
+  so on a descent it sits below the car and the camera pitches down on its own.
 
 ### Open calls
 
