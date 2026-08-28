@@ -149,10 +149,12 @@ https://claude.ai/code/artifact/1f62aafd-5b63-417b-b9b7-8d035c0a909a
 
 Build order — expensive unknowns first, content last:
 
-1. **Done** — deploy pipeline, repo, player settings, size baseline
-2. **Now** — chase camera rig · arcade vehicle controller · greybox downhill track
-3. **Next** — detachable parts · panel deformation · cheap traffic · scoring/gears ·
-   garage & buy · persistence
+1. **Done** — deploy pipeline · repo · player settings · size baseline · chase camera ·
+   vehicle controller · greybox track · car model · R-to-restart · detachable parts
+2. **Now** — tune damage thresholds · rebuild and re-measure download size ·
+   **get a real frame-rate number off a school Chromebook**
+3. **Next** — cheap traffic · scoring & gears · garage and buy · persistence ·
+   panel deformation (only if faked detachment reads badly)
 4. **Later** — split-screen 2P · juice · audio · more content · ship pass
 
 ### Architecture calls already made
@@ -189,6 +191,55 @@ Build order — expensive unknowns first, content last:
 60 FPS target / 30 floor · ≤ 20 MB download · ≤ 40 live rigidbodies · no realtime shadows ·
 no post FX until measured. Revise once there are real Chromebook numbers.
 
+## Scripts
+
+| Script | Job |
+| --- | --- |
+| `Camera/ChaseCamera.cs` | Automatic chase cam. No player input, ever. |
+| `Vehicle/CarInput.cs` | Keys → throttle / steer / handbrake. Has a `Scheme` for split-screen. |
+| `Vehicle/CarController.cs` | Raycast suspension, drive, grip, steering, air control. |
+| `Damage/CarDamage.cs` | Impacts → part damage → detachment. Fires `Damaged` and `PartLost`. |
+| `Damage/DebrisPool.cs` | Pools, caps, expires and sleeps detached parts. |
+| `Game/RunRestart.cs` | R reloads the scene behind a loading bar. |
+| `Debug/PerfReadout.cs` | On-screen FPS/device readout. **Delete before shipping.** |
+
+### Scene setup (SampleScene)
+
+- **Car** — Rigidbody (1200 kg, Interpolate, Continuous), Box Collider
+  (centre `0,1.16,0`, size `2.4,1.84,4.06`), layer `Car`, with `CarInput`,
+  `CarController`, `CarDamage`. The `sedan` FBX is a child at origin.
+- **Wheel anchors** `WheelFL/FR/RL/RR` at local `(±0.48, 0.68, ±1.06)`. The `0.68`
+  puts the suspension at ~⅓ compression when parked — derived, not guessed.
+- **Part anchors** `PartHood`, `PartBumperF/R`, `PartDoorL/R`. Wheel anchors double as
+  the wheel part anchors.
+- **GameManager** — `RunRestart`, `DebrisPool`.
+- **Main Camera** — `ChaseCamera` (target = Car), `PerfReadout`.
+
+Layer discipline, because every mask bug in this project looks like a physics bug:
+the car is on `Car`; `ChaseCamera` ground/collision masks, `CarController` ground mask
+and `CarDamage` damaging layers are all **Default only**. Debris is on `Default` so it
+can hit the car that shed it.
+
+Vehicle FBXs import at **Scale Factor 1.6** — car and debris must match or debris spawns
+the wrong size.
+
+## Damage model
+
+Impacts are matched to the nearest part anchor within `partReach`; damage is
+`(impulse - minimumImpulse) * damagePerImpulse`. At zero health the part detaches and the
+matching generic debris prop is thrown, inheriting the car's velocity at that point.
+
+**A lost wheel is a handling change, not a visual.** `CarController.DetachWheel` sets a
+flag that skips that wheel's spring, drive force and lateral grip, so the corner drops onto
+the body collider and drags. This falls out of raycast suspension for free and would have
+been a fight with `WheelCollider`.
+
+**Open tuning — not yet calibrated against real play.** `minimumImpulse` (900) and
+`damagePerImpulse` (0.045) were reasoned from a 1200 kg car at ~20 m/s. PhysX impulse
+depends on contact count and angle in ways that need measuring. Nothing falling off →
+lower the minimum to ~400 and raise damage to ~0.1. Everything exploding on first contact
+→ raise the minimum to ~2000.
+
 ## Game design
 
 Arcade crash-driving, third-person chase cam.
@@ -220,6 +271,17 @@ acceptable for this personal project but are a second choice.
 Maintain `CREDITS.md` from the first third-party asset onward — record source, author, and
 license for everything, as it is added. Do not reconstruct it later.
 
-Car models must have **doors, hood, bumpers, and wheels as separate meshes** with their own
-transforms. A single welded body mesh cannot support detachable damage and will have to be
-split in Blender.
+### Vehicle meshes — decided
+
+Kenney's Car Kit bodies are a **single welded mesh**; only wheels are separate nodes. No
+free pack splits doors and panels, so panel detachment is **faked by spawning the pack's
+generic debris props** (`debris-door`, `debris-bumper`, `debris-plate-a`) rather than
+removing geometry. There is no hole where the door was.
+
+This was a deliberate call over splitting bodies in Blender (~1 hour per car, ten cars).
+At this poly count and camera distance the flying part is what the eye tracks. Revisit
+only if it reads badly in motion.
+
+Every vehicle and debris piece shares one `colormap` material, so the whole roster batches
+and each extra car costs ~3,000 verts and **no extra texture memory** — which is what makes
+a large garage affordable on a Chromebook.
