@@ -142,23 +142,24 @@ off — threads need COOP/COEP headers Google Sites will never send), `webGLData
 Untested lever if the Chromebook is slow: capping `devicePixelRatio` to 1. HiDPI Chromebooks
 render far more pixels than the GPU can afford. Measure before reaching for it.
 
-## NEXT SESSION — pick up here (rewritten 2026-08-29, late)
+## NEXT SESSION — pick up here (updated 2026-08-30)
 
-The E30 is imported, wired and **driving**. Everything in the old step-by-step wiring block
-is done and has been deleted; what follows is only what is still open.
+The E30 is imported, wired and **driving**, and scoring is wired and counting. Everything in the
+old step-by-step wiring block is done and deleted; what follows is only what is still open.
 
 ### State on disk
 
 **All committed as of 2026-08-30.** `0dba3b5` is the whole E30 import, the Blender pipeline,
-the three damage scripts and the scene wiring; `427dcf4` is scoring. The E30 FBX meta carries
-`isReadable: 1`, which deformation requires. `SampleScene.unity` holds the E30 wiring plus a
-small **pre-existing, unrelated** loading-bar transform change from an earlier session.
+the three damage scripts and the scene wiring; `427dcf4` scoring; `85a946c` the scoring
+readouts; `4b271a1` `PlayerCar`. The E30 FBX meta carries `isReadable: 1`, which deformation
+requires. `SampleScene.unity` holds the E30 wiring plus a small **pre-existing, unrelated**
+loading-bar transform change from an earlier session.
 
 `Assets/Models/` is an empty leftover folder with an orphan `.meta`. Delete it in the Editor.
 
-**Nothing in the scoring commit has been run.** It compiles — verified by building all 13
-scripts with Unity's own Roslyn against the real 6.3 assemblies, zero errors and zero warnings
-— but compiling is not running, and the Editor wiring below has not been done.
+**The scene still needs saving with `PlayerCar` on `Car`**, and `RunScore`'s `gearsPerDamage` /
+`gearsPerPartHealth` were left at `1` / `5` during debugging — check they are back to `0.02` /
+`0.25` before trusting any scoring number.
 
 #### Compile-checking without opening Unity
 
@@ -189,7 +190,31 @@ the contact patch, and the bump stop / anti-roll bar pair.
 no bulges, no black patches. Roof crush and sustained grinding are implemented but were added
 after the last play test.
 
+**Scoring runs (2026-08-30).** The HUD draws, `PlayerCar` registers itself with `RunScore`, damage
+events arrive and the gear counter climbs. What is confirmed is exactly that chain and no more --
+**the combo multiplier, the floating popups, the part bonus and banking to `PlayerWallet` have
+all still never been observed.** See the unrun list below.
+
+It did not work first time, and the failure mode is worth remembering: `RunScore.playerCar` was
+left empty in the scene, so nothing ever registered, and the HUD rendered a counter that sat at 0
+forever. **A frozen readout looks identical to a broken formula, a broken event and a broken
+subscription.** That is what the read-only fields on `RunScore` and `ScoreHud` are for, and the
+Console warning naming the missing component was on screen the whole time.
+
 ### Never run in Unity — still inspection-clean only
+
+- **Everything in scoring except the counter.** The gear count rising is confirmed; these are not:
+  - **The combo multiplier.** `x1.3` and the draining bar should appear on a second hit within
+    `comboWindow` (2.5 s). `multiplierReadout` should read **1** at rest and never 0 — 0 means
+    `RunScore.Update()` is not running at all.
+  - **Sustained contact must NOT build combo.** Scrape a wall: the score should rise while the
+    multiplier stays put. This is the whole reason `CarDamage.Damaged` grew a `sustained` flag,
+    and it is the single most likely thing to be subtly wrong.
+  - **Floating popups.** Depend on `Camera.main` being found and on the `screen.z <= 0` guard.
+  - **The part bonus.** Needs a panel to actually come off, which is itself unrun (below).
+  - **Banking to `PlayerWallet`.** Fires from `RunScore.OnDestroy`. Nothing displays the balance
+    yet, so it can only be checked by reading the Editor's PlayerPrefs at
+    `HKCU\Software\Unity\UnityEditor\DefaultCompany\CarCrash`.
 
 - **Panel detachment against real geometry.** Rammed once, 2026-08-29: the whole shell came off
   at once and was fired sideways. Both causes found and fixed (`maxDamagePerImpact`,
@@ -217,10 +242,17 @@ after the last play test.
 
 ### Open, in rough priority order
 
-0. **Import TMP Essential Resources, add PlayerCar, then play-test scoring.**
-   Window → TextMeshPro → Import TMP Essential Resources (once), add `RunScore` and
-   `ScoreHud` to **GameManager**, and add `PlayerCar` to **Car**. Leave `Player Car` empty. Nothing in the
-   scoring commit has ever run.
+0. **Put the two scoring conversion values back.** `SampleScene` still carries
+   `gearsPerDamage: 1` and `gearsPerPartHealth: 5` from debugging — **50x and 20x the intended
+   `0.02` and `0.25`**. At those numbers one wall hit pays ~700 gears instead of ~14 and a
+   bumper ~800 instead of ~40, so the reference's ~200-gears-per-run scale is meaningless until
+   they go back. Do this before judging any scoring number.
+
+   Then finish play-testing the rest of scoring: combo, sustained-does-not-combo, popups,
+   part bonus, banking. See *Never run in Unity* above for what each one should look like.
+
+   Wiring is done and saved: TMP essentials imported, `RunScore` + `ScoreHud` on **GameManager**,
+   `PlayerCar` on **Car**, `Player Car` correctly left empty.
 
 1. **Play-test the suspension numbers.** `bumpStopStrength` 60000 and `antiRollStrength` 4000
    are reasoned starting points, never driven. Inside wheels lifting mid-corner → drop
@@ -258,15 +290,17 @@ Build order — expensive unknowns first, content last:
 1. **Done** — deploy pipeline · repo · player settings · size baseline · chase camera ·
    vehicle controller · greybox track · car model · R-to-restart · detachable parts ·
    BMW E30 picked, split, imported and **driving** · suspension made stable
-   (cast overshoot · bump stop · anti-roll bars · roll direction)
+   (cast overshoot · bump stop · anti-roll bars · roll direction) ·
+   **scoring wired and counting** (gears · combo · HUD · wallet · `PlayerCar` self-registration)
 2. **Now** — **play-test the suspension numbers** · tune damage thresholds ·
    ram a wall and confirm panels dent, and panels and wheels detach · add in-game CC-BY attribution
    for the E30 · rebuild and re-measure download size ·
    **get a real frame-rate number off a school Chromebook**
 3. **Next** — **feature order agreed 2026-08-30: scoring → first real map → menu and garage →
-   traffic.** Scoring is written and committed (`427dcf4`) but unrun. Traffic is deliberately
-   last, which means the scoring numbers get tuned twice: once now against walls, and again
-   once there are cars to hit, which will be the biggest source of points in the finished game.
+   traffic.** Scoring counts; combo, popups, part bonus and banking are still unobserved.
+   **The first real map is next.** Traffic is deliberately last, which means the scoring numbers
+   get tuned twice: once now against walls, and again once there are cars to hit, which will be
+   the biggest source of points in the finished game — so do not over-tune them yet.
 4. **Later** — split-screen 2P · juice · audio · more content · ship pass
 
 ### Architecture calls already made

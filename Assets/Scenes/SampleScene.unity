@@ -3697,6 +3697,8 @@ GameObject:
   - component: {fileID: 538975026}
   - component: {fileID: 538975025}
   - component: {fileID: 538975027}
+  - component: {fileID: 538975029}
+  - component: {fileID: 538975028}
   m_Layer: 0
   m_Name: GameManager
   m_TagString: Untagged
@@ -3750,6 +3752,55 @@ MonoBehaviour:
   lifetime: 12
   sleepSpeed: 0.35
   sleepDelay: 1.5
+--- !u!114 &538975028
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 538975024}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a0e17da7b2f6d4647965925593a74c40, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ScoreHud
+  score: {fileID: 0}
+  accent: {r: 1, g: 0.78, b: 0.15, a: 1}
+  muted: {r: 1, g: 1, b: 1, a: 0.55}
+  counterSize: 84
+  countUpFloor: 40
+  countUpGain: 6
+  popupCount: 8
+  popupLife: 1.1
+  popupRise: 1.4
+  popupSize: 34
+  boundToScore: 0
+  shownGears: 0
+--- !u!114 &538975029
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 538975024}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 22a820e411caf014aa77aa7876f3fa28, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RunScore
+  playerCar: {fileID: 0}
+  gearsPerDamage: 1
+  gearsPerPartHealth: 5
+  comboWindow: 2.5
+  comboPerHit: 0.25
+  maxMultiplier: 5
+  comboRearmInterval: 0.2
+  minPopupGears: 1
+  carsScoring: 0
+  impactsCounted: 0
+  lastGain: 0
+  scoreReadout: 0
+  multiplierReadout: 0
 --- !u!1 &643157948
 GameObject:
   m_ObjectHideFlags: 0
@@ -3800,6 +3851,7 @@ GameObject:
   - component: {fileID: 767832977}
   - component: {fileID: 767832979}
   - component: {fileID: 767832978}
+  - component: {fileID: 767832980}
   m_Layer: 6
   m_Name: Sedan
   m_TagString: Untagged
@@ -4267,6 +4319,18 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::CarGlass
   shatterAtDamage: 250
   glassMaterialName: Glass
+--- !u!114 &767832980
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 767832965}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 49640ee3ffa9a014d8db7f4e6cea5ee1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerCar
 --- !u!1 &832575517
 GameObject:
   m_ObjectHideFlags: 0
