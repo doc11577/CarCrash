@@ -53,24 +53,20 @@ DEFAULT_CELL = 2.0
 
 MAT_GROUND = "CourseGround"
 MAT_ROCK = "CourseRock"
-MAT_PROP = "CourseProp"
 
 # Viewport colours only -- real textures are assigned in Unity, the same way the car's are.
 THEMES = {
     "quarry": {
         "ground": (0.42, 0.38, 0.33, 1.0),
         "rock": (0.34, 0.30, 0.27, 1.0),
-        "prop": (0.55, 0.54, 0.52, 1.0),
     },
     "jungle": {
         "ground": (0.35, 0.31, 0.22, 1.0),
         "rock": (0.24, 0.30, 0.20, 1.0),
-        "prop": (0.50, 0.49, 0.45, 1.0),
     },
     "desert": {
         "ground": (0.60, 0.48, 0.33, 1.0),
         "rock": (0.52, 0.38, 0.26, 1.0),
-        "prop": (0.62, 0.58, 0.50, 1.0),
     },
 }
 
@@ -388,7 +384,7 @@ def wipe_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
-def surface_height(args, frames, i, offset, lift):
+def surface_height(args, frames, i, offset, lift, features=None, step=1.0):
     """Height for one grid point, before the frame position is added."""
     half = args.width * 0.5
 
@@ -416,10 +412,19 @@ def surface_height(args, frames, i, offset, lift):
         bench_h = args.wall / max(1, args.benches)
         wall_relief = (noise2(along * 0.05, offset * 0.05, args.seed + 8821) - 0.5) * bench_h * 0.45
 
-    return lift + bumps + wall_relief
+    # Kickers, humps and rock outcrops are part of the GROUND, not objects standing on it.
+    # The MAX of the overlapping features, never the sum: summing two that overlap builds a
+    # spike at the intersection, which is both ugly and a launch ramp nobody designed.
+    feature = 0.0
+    if features:
+        for feat in features.get(i, ()):
+            feature = max(feature, feature_lift(feat, (i - feat["i"]) * step,
+                                                offset - feat["offset"]))
+
+    return lift + bumps + wall_relief + feature * on_corridor
 
 
-def build_chunks(args, frames):
+def build_chunks(args, frames, features=None, step=1.0):
     offsets, lifts = cross_section(args)
     samples = len(frames) - 1
     step = args.length / samples
@@ -448,7 +453,7 @@ def build_chunks(args, frames):
         for r in rows:
             origin, _tangent, right = frames[r]
             for c, offset in enumerate(offsets):
-                h = surface_height(args, frames, r, offset, lifts[c])
+                h = surface_height(args, frames, r, offset, lifts[c], features, step)
                 p = origin + right * offset + Vector((0.0, 0.0, h))
                 verts.append((p.x, p.y, p.z))
 
@@ -503,17 +508,17 @@ def build_chunks(args, frames):
     return created, total_tris
 
 
-def course_point(args, frames, i, offset):
+def course_point(args, frames, i, offset, features=None, step=1.0):
     """A point on the finished terrain surface, using exactly the mesh's own maths.
 
-    Obstacles are placed with this rather than with their own approximation, so a boulder
-    cannot end up buried or hovering when the surface noise changes.
+    Boulders are placed with this rather than with their own approximation, so a rock cannot
+    end up buried or hovering when the surface noise or its own outcrop changes.
     """
     origin, _tangent, right = frames[i]
     half = args.width * 0.5
     edge = half + args.shoulder
     lift = wall_lift(args, abs(offset), half, edge)
-    height = surface_height(args, frames, i, offset, lift)
+    height = surface_height(args, frames, i, offset, lift, features, step)
     return origin + right * offset + Vector((0.0, 0.0, height))
 
 
@@ -602,15 +607,143 @@ def build_bowl(args, frames):
     return ob, sum(len(p.vertices) - 2 for p in mesh.polygons)
 
 
-# ---------------------------------------------------------------------------- obstacles
+# ---------------------------------------------------------------------------- features
 
 
-def add_mesh(name, verts, faces, material, smooth=False):
+def feature_lift(feat, along, lateral):
+    """How much one terrain feature raises the ground at a point, in metres.
+
+    `along` and `lateral` are metres from the feature centre, down the course and across it.
+    """
+    half_w = feat["width"] * 0.5
+    if abs(lateral) >= half_w:
+        return 0.0
+
+    # Fade to nothing at the edges, so a feature blends into the corridor instead of standing
+    # on it with a vertical rim.
+    fade = 1.0 - smoothstep(half_w * 0.55, half_w, abs(lateral))
+    half_l = feat["length"] * 0.5
+
+    if feat["kind"] == "kicker":
+        # Rises along the course, then falls away over one cell. That short back face is the
+        # lip -- it is what actually launches the car, and it is deliberately much sharper
+        # than the approach.
+        lip = 2.5
+        if along < -half_l or along > half_l + lip:
+            return 0.0
+        if along <= half_l:
+            profile = smoothstep(-half_l, half_l, along)
+        else:
+            profile = 1.0 - smoothstep(half_l, half_l + lip, along)
+        return feat["height"] * profile * fade
+
+    # hump and outcrop: a rounded swell, symmetric along the course.
+    if abs(along) >= half_l:
+        return 0.0
+    return feat["height"] * (1.0 - smoothstep(0.0, half_l, abs(along))) * fade
+
+
+def plan_features(args, frames):
+    """Decide where the terrain rises into kickers, humps and rock outcrops.
+
+    Obstacles used to be separate wedge and box meshes dropped onto the surface. That was
+    wrong twice over. They read as objects lying on the track rather than as part of the
+    valley -- popcorn on the ground -- and the hand-written face winding on the wedge was
+    backwards, so Unity culled the outside and the ramps rendered inside out.
+
+    Making them part of the terrain removes both failure modes at once: the same mesh cannot
+    be inverted relative to itself, cannot z-fight against itself, and cannot look placed.
+
+    Placement is hashed from the seed, never random, so the same seed always gives the same
+    course. Nothing lands in the first stretch -- the spawn apron has to be clean or the run
+    is over before it starts -- or the last, where the run-out and the bowl are.
+
+    Returns (buckets keyed by station, flat list) so the height function can look up only the
+    handful of features near a given station instead of testing all of them per vertex.
+    """
+    if args.obstacles <= 0.0:
+        return {}, []
+
+    samples = len(frames) - 1
+    step = args.length / samples
+    first = int(samples * 0.08)
+    last = int(samples * 0.90)
+    spacing = max(5, int(round(30.0 / args.obstacles / step)))
+
+    buckets = {}
+    listing = []
+
+    for i in range(first, last, spacing):
+        roll = hash01(i * 7 + args.seed, args.seed + 61)
+        side = (hash01(i * 11 + args.seed, args.seed + 89) - 0.5) * 2.0
+        offset = side * args.width * 0.5 * 0.70
+
+        if roll < 0.36:
+            feat = {
+                "kind": "kicker",
+                "length": 9.0 + 6.0 * hash01(i * 19, args.seed),
+                "width": 7.0 + 5.0 * hash01(i * 17, args.seed),
+                "height": 1.8 + 1.6 * hash01(i * 23, args.seed),
+            }
+        elif roll < 0.60:
+            feat = {
+                "kind": "hump",
+                "length": 8.0 + 7.0 * hash01(i * 29, args.seed),
+                "width": 10.0 + 8.0 * hash01(i * 31, args.seed),
+                "height": 0.9 + 1.2 * hash01(i * 37, args.seed),
+            }
+        else:
+            radius = 1.4 + 2.1 * hash01(i * 41, args.seed)
+            feat = {
+                "kind": "outcrop",
+                "length": radius * 3.2,
+                "width": radius * 3.2,
+                "height": radius * 0.5,
+                "radius": radius,
+            }
+
+        feat["i"] = i
+        feat["offset"] = offset
+        listing.append(feat)
+
+        reach = int(math.ceil((max(feat["length"], feat["width"]) * 0.5 + 4.0) / step))
+        for k in range(i - reach, i + reach + 1):
+            buckets.setdefault(k, []).append(feat)
+
+    return buckets, listing
+
+
+# ---------------------------------------------------------------------------- boulders
+
+
+def add_boulder(name, centre, radius, seed, material):
+    """A low-poly rock, sunk into the swell of ground that `plan_features` raised under it.
+
+    Kept as real geometry rather than made out of terrain, because a terrain dome is smooth
+    and reads as another dune -- the crisp faceted silhouette is the whole point of a rock.
+    What stops it looking dropped on is the outcrop feature beneath it and the fact that its
+    centre sits BELOW the surface.
+    """
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=radius)
+
+    for k, v in enumerate(bm.verts):
+        jitter = 0.62 + 0.76 * hash01(k * 13 + seed, seed + 4523)
+        v.co *= jitter
+
+    # Normals recalculated rather than trusted. This is exactly what the old hand-written ramp
+    # got wrong, and a rock rendered inside out looks like a hole in the world.
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+    verts = [(centre.x + v.co.x, centre.y + v.co.y, centre.z + v.co.z) for v in bm.verts]
+    faces = [tuple(v.index for v in f.verts) for f in bm.faces]
+    bm.free()
+
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, [], faces)
     mesh.validate()
     mesh.materials.append(material)
-    mesh.polygons.foreach_set("use_smooth", [smooth] * len(mesh.polygons))
+    mesh.polygons.foreach_set("use_smooth", [False] * len(mesh.polygons))
     mesh.update()
 
     ob = bpy.data.objects.new(name, mesh)
@@ -618,120 +751,32 @@ def add_mesh(name, verts, faces, material, smooth=False):
     return ob, sum(len(p.vertices) - 2 for p in mesh.polygons)
 
 
-def add_ramp(name, base, forward, right, width, length, height, material):
-    """A wedge: rises from nothing to `height` over `length`. Kept under 30 degrees so it
-    launches the car rather than stopping it dead, and so it stays inside the
-    CarController.maxGroundAngle that decides what counts as ground."""
-    up = Vector((0.0, 0.0, 1.0))
-    hw = width * 0.5
+def build_boulders(args, frames, features, listing, step):
+    """Place a rock in every outcrop swell.
 
-    p = [
-        base - right * hw, base + right * hw,
-        base - right * hw + forward * length, base + right * hw + forward * length,
-        base - right * hw + forward * length + up * height,
-        base + right * hw + forward * length + up * height,
-    ]
-    verts = [(v.x, v.y, v.z) for v in p]
-    faces = [(0, 1, 3, 2), (2, 3, 5, 4), (0, 2, 4), (1, 5, 3), (0, 4, 5, 1)]
-    return add_mesh(name, verts, faces, material)
-
-
-def add_block(name, base, forward, right, width, length, height, material):
-    up = Vector((0.0, 0.0, 1.0))
-    hw = width * 0.5
-    hl = length * 0.5
-
-    corners = []
-    for sz in (0.0, height):
-        for sx, sy in ((-hw, -hl), (hw, -hl), (hw, hl), (-hw, hl)):
-            v = base + right * sx + forward * sy + up * sz
-            corners.append((v.x, v.y, v.z))
-
-    faces = [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
-    return add_mesh(name, corners, faces, material)
-
-
-def add_boulder(name, centre, radius, seed, material):
-    """Low-poly rock: an icosphere pushed about by noise. 80 triangles, which is nothing, and
-    it is far better at making a course read as rocky than mesh noise on the terrain is --
-    the terrain grid physically cannot represent anything under about two cells."""
-    bm = bmesh.new()
-    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=radius)
-
-    for k, v in enumerate(bm.verts):
-        jitter = 0.62 + 0.76 * hash01(k * 13 + seed, seed + 4523)
-        v.co *= jitter
-        # Flatten the underside so it beds into the ground instead of balancing on a point.
-        if v.co.z < 0.0:
-            v.co.z *= 0.55
-
-    verts = [(centre.x + v.co.x, centre.y + v.co.y, centre.z + v.co.z) for v in bm.verts]
-    faces = [tuple(v.index for v in f.verts) for f in bm.faces]
-    bm.free()
-
-    return add_mesh(name, verts, faces, material)
-
-
-def build_obstacles(args, frames):
-    """Scatter ramps, blocks and boulders down the corridor.
-
-    Placement is hashed from the seed, never random, so the same seed always yields the same
-    course. Nothing is placed in the first stretch (the spawn apron has to be clean, or the
-    run is over before it starts) or the last (the run-out and the bowl are where you stop).
-
-    Everything is STATIC. Knockable barriers would suit a crash game, but the standing budget
-    is 40 live rigidbodies and debris from the car already competes for those.
+    Sunk by a chunk of its own radius so the ground cuts through it and it reads as bedrock
+    breaking the surface rather than a pebble resting on top. The surface height comes from
+    the terrain's own function INCLUDING the outcrop, so the rock and its mound cannot
+    disagree however the noise changes.
     """
-    if args.obstacles <= 0.0:
-        return [], 0
-
     rock = ensure_material(MAT_ROCK, THEMES[args.theme]["rock"])
-    prop = ensure_material(MAT_PROP, THEMES[args.theme]["prop"])
-
-    samples = len(frames) - 1
-    first = int(samples * 0.08)
-    last = int(samples * 0.90)
-
-    spacing = max(6, int(round(28.0 / args.obstacles / (args.length / samples))))
-    half = args.width * 0.5
 
     created = []
     tris = 0
-    n = 0
 
-    for i in range(first, last, spacing):
-        n += 1
-        roll = hash01(i * 7 + args.seed, args.seed + 61)
-        side = (hash01(i * 11 + args.seed, args.seed + 89) - 0.5) * 2.0
-        offset = side * half * 0.82
+    for n, feat in enumerate(listing):
+        if feat["kind"] != "outcrop":
+            continue
 
-        _origin, tangent, right = frames[i]
-        forward = Vector((tangent.x, tangent.y, 0.0))
-        if forward.length < 1e-6:
-            forward = Vector((0.0, 1.0, 0.0))
-        forward.normalize()
+        radius = feat["radius"]
+        base = course_point(args, frames, feat["i"], feat["offset"], features, step)
 
-        base = course_point(args, frames, i, offset)
+        # Centre BELOW the surface, not above it. Sitting the centre on the ground leaves the
+        # whole lower hemisphere visible and the rock reads as dropped on top of the track.
+        # Sunk, the ground line cuts across it and it reads as bedrock breaking through.
+        centre = base - Vector((0.0, 0.0, radius * 0.28))
 
-        if roll < 0.34:
-            # Ramp. Aligned with the course, so it launches you along it rather than sideways.
-            width = 4.5 + 3.5 * hash01(i * 17, args.seed)
-            length = 6.0 + 3.0 * hash01(i * 19, args.seed)
-            height = 1.9 + 1.5 * hash01(i * 23, args.seed)
-            ob, t = add_ramp(f"ObstacleRamp{n:03d}", base, forward, right,
-                             width, length, height, prop)
-        elif roll < 0.55:
-            width = 1.6 + 2.4 * hash01(i * 29, args.seed)
-            length = 1.4 + 1.6 * hash01(i * 31, args.seed)
-            height = 1.0 + 1.4 * hash01(i * 37, args.seed)
-            ob, t = add_block(f"ObstacleBlock{n:03d}", base - Vector((0.0, 0.0, 0.15)),
-                              forward, right, width, length, height, prop)
-        else:
-            radius = 1.3 + 2.0 * hash01(i * 41, args.seed)
-            ob, t = add_boulder(f"ObstacleRock{n:03d}",
-                                base + Vector((0.0, 0.0, radius * 0.35)),
-                                radius, i, rock)
-
+        ob, t = add_boulder(f"CourseRock{n:03d}", centre, radius, feat["i"], rock)
         created.append(ob)
         tris += t
 
@@ -901,7 +946,7 @@ def uphill_check(frames):
 
 
 def report(args, frames, chunks, total_tris, step,
-           bowl=None, bowl_tris=0, obstacles=None, obstacle_tris=0):
+           bowl=None, bowl_tris=0, obstacles=None, obstacle_tris=0, listing=None):
     radius = min_turn_radius(frames, step)
     grade = max_grade(frames)
     climb, climb_at = uphill_check(frames)
@@ -923,7 +968,14 @@ def report(args, frames, chunks, total_tris, step,
     print(f"  rollers               {args.rollers:.0f} m amplitude")
     print(f"  chunks                {len(chunks)} of {args.chunk:.0f} m")
     print(f"  stopping bowl         {'radius ' + str(int(args.bowl_radius)) + ' m, ' + f'{bowl_tris:,} tris' if bowl else 'none'}")
-    print(f"  obstacles             {len(obstacles)}, {obstacle_tris:,} tris")
+    listing = listing or []
+    kinds = {}
+    for feat in listing:
+        kinds[feat["kind"]] = kinds.get(feat["kind"], 0) + 1
+    shaped = ", ".join(f"{v} {k}" for k, v in sorted(kinds.items())) or "none"
+
+    print(f"  terrain features      {len(listing)} ({shaped}) -- folded into the ground, no meshes")
+    print(f"  boulder meshes        {len(obstacles)}, {obstacle_tris:,} tris")
     print(f"  triangles             {everything:,} total, {per_chunk:,.0f} per terrain chunk")
     print(f"  drive time at 20 m/s  {args.length / 20.0:.0f} s")
 
@@ -980,14 +1032,19 @@ def main():
     step = args.length / samples
 
     frames = build_centreline(args, samples)
-    chunks, total_tris = build_chunks(args, frames)
 
+    # Features are planned BEFORE the terrain, because they are part of it: the height
+    # function folds them in, so a kicker is a fold in the ground rather than a wedge sitting
+    # on it.
+    features, listing = plan_features(args, frames)
+
+    chunks, total_tris = build_chunks(args, frames, features, step)
     bowl, bowl_tris = build_bowl(args, frames)
-    obstacles, obstacle_tris = build_obstacles(args, frames)
+    boulders, boulder_tris = build_boulders(args, frames, features, listing, step)
 
     export_fbx(os.path.abspath(args.output))
     report(args, frames, chunks, total_tris, step,
-           bowl, bowl_tris, obstacles, obstacle_tris)
+           bowl, bowl_tris, boulders, boulder_tris, listing)
 
     if args.preview:
         render_preview(os.path.abspath(args.preview), frames, args)
