@@ -1124,6 +1124,19 @@ Gotchas paid for already:
   see is their top edge receding, which looks like rolling hills whatever the profile is.
 - **Do not put the preview camera on the centreline at eye height** — it ends up inside whichever
   obstacle is there and renders one grey slab.
+- **Render every distinct STRUCTURE, not just the typical view.** A broken end cap shipped twice
+  because the overview, road and wall cameras all look at the middle of the course and none of
+  them looks anywhere near either bay. There is now a `_start` camera. Add one for anything new
+  that is not a chunk.
+
+**When a strip of geometry needs a bottom edge, give it its own vertex per column.** The end cap
+reused the two *outer* skirt corners for every quad across the cross-section, so each 2 m segment
+of the profile was stretched down to the same pair of points 68 m apart — a fan of overlapping
+non-planar slabs that read as a giant wall beside the start bay. The comment claimed it
+interpolated between the corners; it did not, and the comment is why it survived review.
+
+**Only cap an end that has no bay.** A bay's disc already covers that opening and brings its own
+skirt, and capping as well builds a wall straight across the mouth the player must drive through.
 
 ### Scoring — built 2026-08-30
 
