@@ -92,3 +92,28 @@ toy-like, which is what the reference footage looks like. Measured, not quoted:
 
 `coupe-split.fbx` is derived from `Source/coupe.fbx` by `tools/blender/split_car.py` — see
 CLAUDE.md. CC0 permits modification and redistribution without restriction.
+
+---
+
+## TextMesh Pro essential resources
+
+- **Author:** Unity Technologies, bundled inside `com.unity.ugui` 2.0.0
+- **Source:** Window → TextMeshPro → Import TMP Essential Resources
+- **Attribution required:** No, for the Unity-authored shaders and settings.
+- **Location:** `Assets/TextMesh Pro/`
+- **Added:** 2026-08-30, because `ScoreHud` draws nothing without the default font asset.
+
+Committed to the repo rather than left to each machine's import, so the GUIDs stay stable.
+Two third-party pieces come with it and carry their own terms:
+
+- **Liberation Sans** — Digitized data © 2010 Google Corporation, © 2012 Red Hat Inc.
+  **SIL Open Font License 1.1**, full text at `Assets/TextMesh Pro/Fonts/LiberationSans - OFL.txt`.
+  This is the font the HUD actually renders with. OFL permits embedding in a game without
+  attribution in the product; the licence file must travel with the source, which it does.
+- **EmojiOne sample sprites** — `Assets/TextMesh Pro/Sprites/EmojiOne.png`, terms at
+  `EmojiOne Attribution.txt`. **Unused by this project.** It is TMP's default sprite asset and
+  arrives whether wanted or not. If it is ever actually drawn, check EmojiOne's licensing
+  first — the bundled note points at their site rather than granting anything outright.
+
+Build-size note, because `Resources/` folders are force-included: `LiberationSans SDF.asset` is
+**2.2 MB** and ships whether referenced or not. See CLAUDE.md for the trimmed-font-asset fix.
