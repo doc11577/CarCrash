@@ -387,6 +387,23 @@ Build order — expensive unknowns first, content last:
   Not fixable in the Inspector by rotating the mesh, and **not** fixable by parenting the mesh
   under a rotated empty: `CarDamage` needs `Part.visual` to be the object that actually carries
   the `MeshFilter`, for both `PartPosition()` and `ThrowRealPart()`'s collider sizing.
+- **A SphereCast hit steeper than `maxGroundAngle` (55°) is a wall, not ground, and falls back
+  to a Raycast.** Reported from play 2026-08-30: scraping past a tilted surface made the wheels
+  beside it visibly climb onto it. A sphere sweep reports whatever the sphere **touches**, which
+  includes anything beside the wheel as well as under it — graze a tilted face and the hit comes
+  back well above the ground the tyre is on, the spring reads that as compression, and it lifts
+  the corner onto the ledge.
+
+  The fix keeps the sphere for what it is actually there for. Reject the steep hit, then cast a
+  straight ray, which **can only ever report what is directly beneath** and so cannot be fooled
+  sideways; the sphere still handles seams and edges everywhere it is genuinely looking at
+  ground. Costs one extra raycast, and only in frames where a wheel is near a wall.
+
+  Note `centreTravel` now keys off whether the SPHERE hit, not off `wheelSphereCast` — the two
+  casts report distance differently and using the toggle would misread the fallback by a whole
+  `wheelRadius`. Raising `maxGroundAngle` brings ledge-climbing back; much below ~45° and
+  legitimate ramps stop counting as ground.
+
 - **The camera tracks the car's VELOCITY, not its facing.** In a game built around spins
   and broadside hits, a facing-locked camera whips around and makes people ill. Below
   `velocityYawThreshold` it falls back to facing so parking still reads correctly, and
@@ -968,6 +985,67 @@ Arcade crash-driving, third-person chase cam.
 - **Goal** — bomb downhill and destroy the car; damage earns gears; gears buy more cars
 - **Damage** — deformable panels plus detachable parts: doors, hood, bumpers, wheels
 
+### Maps — first course built 2026-08-30
+
+**Maps are GENERATED, not downloaded.** Searched properly first: no CC0 or CC-BY asset exists
+that is a drivable downhill destruction course. The good-looking terrain is photogrammetry scale
+(a Sketchfab canyon at **229k tris**, against an 11.6k-tri car), the CC0 modular kits (Kenney
+Racing Kit, Fertile Soil) are toy low-poly, and the open-source racing games ship **GPL**
+(Stunt Rally) or **CC-BY-SA** (SuperTuxKart) track data, neither of which belongs in this repo.
+
+**Unity Asset Store assets are also ruled out permanently** — the EULA forbids redistributing
+them, and this repo must stay public for jsDelivr. That eliminates most search results for
+"free Unity track".
+
+The reference maps (BeamNG *Downhill Destruction*, *Slant of Death*) are a **sculpted hillside
+plus placed obstacles**. Realism is in the texture and the silhouette, not the triangle count —
+the same trade the E30 already makes. And the obstacle layout is game design, which nothing
+downloadable could supply.
+
+`tools/blender/build_course.py` sweeps a descending, snaking centreline into a corridor with
+terraced walls, then scatters obstacles. **Quarry01**, the first map:
+
+| | |
+| --- | --- |
+| Length / drop | 1,800 m, 270 m (15% average, 23.1% steepest) |
+| Drive time | ~90 s at the 20 m/s a crash course averages (`topSpeed` is 32) |
+| Tightest turn | 99 m radius |
+| Corridor | 26 m drivable + 5 m shoulder, 22 m walls, 3 benches |
+| Triangles | 66,444 — 18 chunks × 3,400, bowl 2,688, obstacles 2,556 |
+
+Decisions worth keeping:
+
+- **Chunked at 100 m, not one mesh.** One mesh is a single draw call with **no frustum culling**
+  — all 66k triangles submitted every frame. Chunked, 4–6 are ever visible: ~17k rendered. It
+  also cooks colliders faster and lets the PhysX broadphase reject most of the world.
+- **Terraced quarry benches are what make it read as excavated rock.** A smooth wall reads as a
+  sand dune however much noise is on it; that is exactly how the first two renders came out.
+- **Rock is FLAT-shaded, the corridor smooth.** Free, and the single biggest look change —
+  smooth-shading a faceted wall averages its normals into draped fabric.
+- **Terrace the height ABOVE the shoulder, never the absolute height.** Quantising absolute
+  height put the first bench tread *below* the shoulder top (measured: 3.96 m dropping to
+  2.72 m), which is a **ditch down both corridor edges** that would snatch a wheel. The report
+  prints the cross-section and flags any non-monotonic step.
+- **The bowl is a true HALF disc.** Its flat edge meets the corridor end, so nothing overlaps the
+  last chunk into coplanar z-fighting.
+- **Obstacles are placed with the terrain's own height function** (`course_point`), so none can
+  hover or bury when the noise changes. All **static** — knockable barriers would suit the game
+  but compete with car debris for the 40-rigidbody budget.
+- **Surface noise stops at ~4 m wavelength.** A 2 m cell cannot represent finer without
+  aliasing, so rock detail belongs in the texture and in scattered boulders, not in the grid.
+- **`bake_space_transform=True` on export**, which `split_car.py` never did. Every chunk arrives
+  in Unity with an identity transform instead of the `(-90, 0, 0)` that made the car's wheels
+  unusable.
+
+Gotchas paid for already:
+
+- **Blender's default camera far clip is 100 m.** On a 1,800 m course the overview renders as an
+  empty frame and the road shot gets a black band that reads convincingly as night sky.
+- **Look ACROSS the course, not down it.** Down the corridor the walls are edge-on and all you
+  see is their top edge receding, which looks like rolling hills whatever the profile is.
+- **Do not put the preview camera on the centreline at eye height** — it ends up inside whichever
+  obstacle is there and renders one grey slab.
+
 ### Scoring — built 2026-08-30
 
 **Gears are the score and the currency at once.** `RunScore` converts damage into gears live;
@@ -1193,6 +1271,7 @@ fit. This is the single most important constraint when picking the base.
 | `inspect_model.py` | Print objects, verts, tris, dimensions, materials. Run before anything else. |
 | `split_car.py` | Join → decimate → carve panels by region → set hinge origins → interior shell → export FBX. |
 | `preview_split.py` | Render the split FBX with each panel colour-coded. **Always look at this**; the triangle report cannot tell you a region cut a door in half. |
+| `build_course.py` | Generate a downhill crash course: descending corridor, terraced quarry walls, rollers, obstacles, stopping bowl. Renders three previews. |
 
 ```bash
 BL="/c/Program Files (x86)/Steam/steamapps/common/Blender/blender.exe"
