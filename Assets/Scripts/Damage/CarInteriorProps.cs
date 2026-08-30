@@ -19,6 +19,23 @@ using UnityEngine;
 /// triangles and a single draw call. They sit inside the bodywork, so they are invisible until
 /// something comes off, and they are built in Start() rather than Awake() so CarDeformation has
 /// already collected its panel list and will not try to dent a solid engine block.
+///
+/// MEASURED BODY BOUNDS, in the car's local space, ground at y = 0, +z forward. Every default
+/// box is sized against these. Take them from tools/blender/car_bounds.py after any re-export --
+/// do NOT re-derive them, and do not trust an older figure written down elsewhere:
+///
+///   Body           x -0.820 .. 0.863   y 0.145 .. 1.355   z -2.578 .. 1.586
+///   InteriorShell  x -0.763 .. 0.805   y 0.187 .. 1.306   z -2.499 .. 1.524
+///   PartHood       x -0.761 .. 0.785   y 0.671 .. 0.912   z  0.240 .. 1.346
+///   PartTrunk      x -0.765 .. 0.797   y 0.733 .. 1.284   z -2.386 .. -1.519
+///   PartDoorL      x -0.801 ..-0.168   y 0.271 .. 1.082   z -1.248 .. 0.306
+///   PartDoorR      x  0.219 .. 0.843   y 0.271 .. 1.082   z -1.248 .. 0.306
+///
+/// THE HOOD IS A SLOPE, NOT A CEILING, AND THAT IS THE TRAP. Its surface falls from 0.912 at
+/// the cowl to 0.671 at the nose -- roughly 0.218 m of headroom lost per metre forward. A box
+/// with a flat top therefore has least clearance at its FRONT edge, which is exactly where the
+/// old dash and engine broke through. Available headroom at a given z is about
+/// `0.912 - 0.218 * (z - 0.240)`.
 /// </remarks>
 [DisallowMultipleComponent]
 public class CarInteriorProps : MonoBehaviour
@@ -35,18 +52,33 @@ public class CarInteriorProps : MonoBehaviour
              "already uses, which is the CarInterior material split_car.py authored.")]
     public Material interiorMaterial;
 
-    [Tooltip("Boxes to build, in the CAR's local space with the ground at y = 0. Defaults are " +
-             "proportioned for the E30: body spans y 0 to 1.21, z -2.41 to +1.45, x +/-0.84. " +
-             "Select the car to see them drawn as gizmos while you adjust them.")]
+    [Tooltip("Boxes to build, in the CAR's local space with the ground at y = 0 and +z forward. " +
+             "Select the car to see them drawn as gizmos while you adjust them. Every default " +
+             "below is checked against the MEASURED body bounds in the remarks -- if you move " +
+             "one, check it against those rather than against the old figures in CLAUDE.md, " +
+             "which were wrong and are what put the dash through the bonnet.")]
     public Prop[] props = new Prop[]
     {
-        new Prop { name = "engine",     center = new Vector3(0f,    0.55f,  1.00f), size = new Vector3(0.78f, 0.45f, 0.80f) },
-        new Prop { name = "dash",       center = new Vector3(0f,    0.86f,  0.50f), size = new Vector3(1.42f, 0.20f, 0.30f) },
-        new Prop { name = "seatL",      center = new Vector3(-0.34f, 0.72f, 0.02f), size = new Vector3(0.44f, 0.52f, 0.48f) },
-        new Prop { name = "seatR",      center = new Vector3( 0.34f, 0.72f, 0.02f), size = new Vector3(0.44f, 0.52f, 0.48f) },
-        new Prop { name = "rearBench",  center = new Vector3(0f,    0.70f, -0.62f), size = new Vector3(1.30f, 0.48f, 0.44f) },
-        new Prop { name = "floorPan",   center = new Vector3(0f,    0.36f, -0.35f), size = new Vector3(1.48f, 0.08f, 2.55f) },
-        new Prop { name = "bootFloor",  center = new Vector3(0f,    0.62f, -1.85f), size = new Vector3(1.36f, 0.08f, 0.95f) },
+        // Top at y 0.68. The hood surface falls from 0.912 at the cowl to 0.671 at the nose,
+        // so a box that reaches z 1.20 has only about 0.70 of headroom there -- this is the
+        // prop with the least clearance and the one to re-check first after any change.
+        new Prop { name = "engine",     center = new Vector3(0f,     0.48f,  0.85f), size = new Vector3(0.80f, 0.40f, 0.70f) },
+
+        // Top at y 0.89, just under the 0.912 scuttle, and held BEHIND the cowl at z 0.24.
+        // It used to top out at 0.96 and reach z 0.65, which put it straight through the
+        // bonnet where the windscreen meets it.
+        new Prop { name = "dash",       center = new Vector3(0f,     0.80f,  0.05f), size = new Vector3(1.42f, 0.18f, 0.34f) },
+
+        // Nudged back so the front-top corner cannot clip the windscreen base: at z 0.26 the
+        // bodywork is only 0.908 high and the seat backs reach 0.98.
+        new Prop { name = "seatL",      center = new Vector3(-0.34f, 0.72f, -0.06f), size = new Vector3(0.44f, 0.52f, 0.48f) },
+        new Prop { name = "seatR",      center = new Vector3( 0.34f, 0.72f, -0.06f), size = new Vector3(0.44f, 0.52f, 0.48f) },
+
+        new Prop { name = "rearBench",  center = new Vector3(0f,     0.70f, -0.62f), size = new Vector3(1.30f, 0.48f, 0.44f) },
+        new Prop { name = "floorPan",   center = new Vector3(0f,     0.36f, -0.35f), size = new Vector3(1.48f, 0.08f, 2.55f) },
+
+        // Sits at y 0.58-0.66, comfortably under the boot lid, which starts at 0.733.
+        new Prop { name = "bootFloor",  center = new Vector3(0f,     0.62f, -1.85f), size = new Vector3(1.36f, 0.08f, 0.95f) },
     };
 
     GameObject built;

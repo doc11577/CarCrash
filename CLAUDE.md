@@ -447,7 +447,7 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 
 - **Car** — Rigidbody (1200 kg, Interpolate, Continuous), layer `Car`, with `CarInput`,
   `CarController`, `CarDamage`, `PlayerCar`. The FBX is a child at origin, **Scale Factor 1.0**.
-- **Wheel anchors** `WheelFL/FR/RL/RR` at local `(±0.877, 0.61, +1.776 / -1.345)`, with
+- **Wheel anchors** `WheelFL/FR/RL/RR` at local `(±0.719, 0.50, +0.909 / -1.661)` — **measured from the scene, 2026-08-30; the previously documented `(±0.877, 0.61, +1.776/-1.345)` was wrong**. Wheelbase 2.57 m, track 1.44 m, both matching the real E30. With
   `wheelRadius = 0.41`. The `0.61` is derived, not guessed: `wheelRadius + ⅔ × suspensionTravel`
   puts the suspension at ⅓ compression when parked. `springStrength` 9000 is unchanged —
   compression is normalised 0–1, so 9000 × ⅓ ≈ the 2943 N per corner a 1200 kg car needs.
@@ -842,8 +842,30 @@ taken its panel list and will not try to dent a solid engine block. And shadow c
 receiving are both off — the props are only ever seen through a hole, and realtime shadows are off
 project-wide anyway.
 
-Positions are in CAR-local space with the ground at `y = 0`, proportioned for the E30 (body spans
-`y 0..1.21`, `z -2.41..+1.45`, `x +/-0.84`). Select the car to see them as gizmos while adjusting.
+Positions are in CAR-local space with the ground at `y = 0` and `+z` forward. Select the car to
+see them as gizmos while adjusting.
+
+**MEASURED bounds, 2026-08-30 — the figures previously written here (`y 0..1.21`, `z -2.41..+1.45`,
+`x ±0.84`) were WRONG, and they are what put the dash box through the bonnet.** Get them from
+`tools/blender/car_bounds.py`, never by hand:
+
+| Object | x | y | z |
+| --- | --- | --- | --- |
+| Body | −0.820 … 0.863 | 0.145 … 1.355 | −2.578 … 1.586 |
+| InteriorShell | −0.763 … 0.805 | 0.187 … 1.306 | −2.499 … 1.524 |
+| **PartHood** | −0.761 … 0.785 | **0.671 … 0.912** | **0.240 … 1.346** |
+| PartTrunk | −0.765 … 0.797 | 0.733 … 1.284 | −2.386 … −1.519 |
+| PartDoorL / R | −0.801…−0.168 / 0.219…0.843 | 0.271 … 1.082 | −1.248 … 0.306 |
+
+**The hood is a SLOPE, not a ceiling, and that is the trap.** Its surface falls from `0.912` at
+the cowl to `0.671` at the nose — about **0.218 m of headroom lost per metre forward**. A box with
+a flat top therefore has least clearance at its *front* edge, which is exactly where both the dash
+and the engine broke through. Headroom at a given z is roughly `0.912 - 0.218 * (z - 0.240)`.
+
+Reported from play 2026-08-30: the dash topped out at `0.96` against a hood surface of `0.912`, so
+it protruded where the windscreen meets the bonnet. The engine block topped out at `0.775`, which
+clears the cowl but breaks through past the halfway point — the same bug, not yet noticed. Both
+are fixed and both were found by measuring rather than by looking.
 
 **The readouts exist so this stays measured.** In play mode:
 
@@ -1287,6 +1309,7 @@ fit. This is the single most important constraint when picking the base.
 | --- | --- |
 | `inspect_model.py` | Print objects, verts, tris, dimensions, materials. Run before anything else. |
 | `split_car.py` | Join → decimate → carve panels by region → set hinge origins → interior shell → export FBX. |
+| `car_bounds.py` | Print every part's bounding box in the CAR's local space. Run before placing anything inside the bodywork. |
 | `preview_split.py` | Render the split FBX with each panel colour-coded. **Always look at this**; the triangle report cannot tell you a region cut a door in half. |
 | `build_course.py` | Generate a downhill crash course: descending corridor, terraced quarry walls, rollers, obstacles, stopping bowl. Renders three previews. |
 
