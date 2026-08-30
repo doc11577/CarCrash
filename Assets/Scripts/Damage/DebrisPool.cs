@@ -95,6 +95,44 @@ public class DebrisPool : MonoBehaviour
         return go;
     }
 
+    /// <summary>
+    /// Adopt an object that is already in the world and manage its lifetime as debris.
+    ///
+    /// Real detached panels cannot be pooled: each one is a unique child of a specific car,
+    /// not an instance of a prefab, and <see cref="CarDamage.Repair"/> needs to bolt that
+    /// exact object back on. Adopted pieces still count against <see cref="maxLive"/> and
+    /// still expire and sleep, so a car shedding eight panels cannot escape the budget --
+    /// they are simply deactivated on recycle rather than pushed onto an idle stack.
+    /// </summary>
+    public void Track(GameObject go, Rigidbody body)
+    {
+        if (go == null) return;
+
+        while (live.Count >= maxLive && live.Count > 0)
+            Recycle(0);
+
+        live.Add(new Piece
+        {
+            go = go,
+            body = body,
+            prefab = null,
+            releaseAt = Time.time + lifetime,
+            restingSince = -1f
+        });
+    }
+
+    /// <summary>
+    /// Stop managing an adopted object. Call this when a panel is bolted back on, otherwise
+    /// the stale live entry expires later and deactivates a panel that is now part of a car.
+    /// </summary>
+    public void Forget(GameObject go)
+    {
+        if (go == null) return;
+
+        for (int i = live.Count - 1; i >= 0; i--)
+            if (live[i].go == go) live.RemoveAt(i);
+    }
+
     void Update()
     {
         float now = Time.time;
@@ -143,8 +181,12 @@ public class DebrisPool : MonoBehaviour
         }
 
         piece.go.SetActive(false);
-        piece.go.transform.SetParent(transform, false);
 
+        // An adopted piece (prefab == null) belongs to a car, not to the pool. Leave its
+        // transform alone so Repair can find it and put it back where it came from.
+        if (piece.prefab == null) return;
+
+        piece.go.transform.SetParent(transform, false);
         Give(piece.prefab, piece.go);
     }
 

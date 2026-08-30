@@ -1,7 +1,12 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 /// <summary>
-/// Automatic chase camera. Takes no player input at all — the player only drives.
+/// Automatic chase camera. The player never has to steer it.
+///
+/// There is one optional exception: hold left mouse and drag to look around while stopped
+/// (see <see cref="UpdateLookAround"/>). It is never required, driving overrules it, and it
+/// returns on its own — so the standing "no camera the player must manage" rule still holds.
 ///
 /// Fixes the four things the reference game gets wrong:
 ///   1. It follows the direction the car is MOVING, not the direction it is facing,
@@ -89,9 +94,38 @@ public class ChaseCamera : MonoBehaviour
     [Tooltip("Keeps the near plane clear of walls.")]
     public float cameraRadius = 0.35f;
 
+    [Header("Look around")]
+    [Tooltip("Hold the left mouse button and drag to look around the car. Always optional.")]
+    public bool allowMouseLook = true;
+
+    [Tooltip("Degrees of camera swing per pixel of mouse movement.")]
+    public float lookSensitivity = 0.25f;
+
+    [Tooltip("How far round the car you can swing, in degrees each way.")]
+    public float maxLookYaw = 150f;
+
+    [Tooltip("How far below the resting angle you can look, in degrees.")]
+    public float minLookPitch = -25f;
+
+    [Tooltip("How far above the resting angle you can look, in degrees.")]
+    public float maxLookPitch = 45f;
+
+    [Tooltip("Driving faster than this (m/s) takes the camera back. This is the safety net.")]
+    public float lookCancelSpeed = 2f;
+
+    [Tooltip("Seconds after letting go before the camera starts swinging back.")]
+    public float lookReturnDelay = 0.35f;
+
+    [Tooltip("How fast the camera returns to its automatic framing. Higher is snappier.")]
+    public float lookReturnSharpness = 3f;
+
     Camera cam;
     float yaw;
     float fov;
+    float lookYaw;
+    float lookPitch;
+    float lookBlend;
+    float lastLookTime = -99f;
     Vector3 groundNormal = Vector3.up;
     Vector3 aimPoint;
     bool initialised;
@@ -124,12 +158,19 @@ public class ChaseCamera : MonoBehaviour
 
         UpdateYaw(flatVelocity, speed, dt);
         UpdateGroundNormal(dt);
+        UpdateLookAround(speed, dt);
 
         Vector3 rigUp = Vector3.Slerp(Vector3.up, groundNormal, slopeAlign);
         Vector3 rigForward = Vector3.ProjectOnPlane(YawDirection(), rigUp).normalized;
         if (rigForward.sqrMagnitude < 0.0001f) rigForward = YawDirection();
 
         Quaternion basis = Quaternion.LookRotation(rigForward, rigUp);
+
+        // The look-around is an offset ON the automatic rig, never a replacement for it.
+        // The rig keeps tracking velocity and slope underneath, so letting go returns to a
+        // frame that is already correct rather than to a stale one.
+        if (lookYaw != 0f || lookPitch != 0f)
+            basis *= Quaternion.Euler(lookPitch, lookYaw, 0f);
 
         Vector3 desiredPosition = target.position
             + basis * new Vector3(
@@ -142,6 +183,12 @@ public class ChaseCamera : MonoBehaviour
             desiredPosition = PullInFromGeometry(pivot, desiredPosition);
 
         Vector3 desiredAim = ResolveAimPoint(rigForward, rigUp, speed01);
+
+        // While looking around, aim at the car rather than down the road. Aiming ahead is
+        // the downhill fix and it is right when driving, but it fights you when the whole
+        // point is to inspect the car you just wrecked.
+        if (lookBlend > 0f)
+            desiredAim = Vector3.Lerp(desiredAim, target.position + rigUp * lookHeight, lookBlend);
 
         if (!initialised)
         {
@@ -189,6 +236,56 @@ public class ChaseCamera : MonoBehaviour
 
         if (!initialised) yaw = desiredYaw;
         else yaw = Mathf.LerpAngle(yaw, desiredYaw, Damp(yawSharpness, dt));
+    }
+
+    /// <summary>
+    /// Optional drag-to-look, and the rules that stop it becoming a camera the player has
+    /// to manage.
+    ///
+    /// The standing rule for this project is that the camera takes no player input, because
+    /// a camera you must steer on a school Chromebook trackpad is a failure. This obeys the
+    /// spirit of that rule rather than breaking it: the look is never required, driving
+    /// always overrules it, and it returns on its own. You cannot leave the camera pointing
+    /// somewhere useless and then have to fix it mid-run.
+    /// </summary>
+    void UpdateLookAround(float speed, float dt)
+    {
+        if (!allowMouseLook)
+        {
+            lookYaw = lookPitch = lookBlend = 0f;
+            return;
+        }
+
+        Mouse mouse = Mouse.current;
+
+        // Driving wins, always. Above walking pace the drag is ignored outright, so the
+        // camera cannot be held off-axis while the player is actually going somewhere.
+        bool dragging = mouse != null
+                        && mouse.leftButton.isPressed
+                        && speed <= lookCancelSpeed;
+
+        if (dragging)
+        {
+            Vector2 delta = mouse.delta.ReadValue();
+            lookYaw = Mathf.Clamp(lookYaw + delta.x * lookSensitivity, -maxLookYaw, maxLookYaw);
+            lookPitch = Mathf.Clamp(lookPitch - delta.y * lookSensitivity, minLookPitch, maxLookPitch);
+            lastLookTime = Time.time;
+        }
+        else if (Time.time - lastLookTime > lookReturnDelay)
+        {
+            float t = Damp(lookReturnSharpness, dt);
+            lookYaw = Mathf.Lerp(lookYaw, 0f, t);
+            lookPitch = Mathf.Lerp(lookPitch, 0f, t);
+
+            // Snap the last fraction of a degree away so the offset reaches exactly zero
+            // and the rig stops paying for a rotation nobody can see.
+            if (Mathf.Abs(lookYaw) < 0.02f) lookYaw = 0f;
+            if (Mathf.Abs(lookPitch) < 0.02f) lookPitch = 0f;
+        }
+
+        // How much the look is displacing the view, used to fade the aim from the road
+        // ahead to the car itself. 30 degrees of swing counts as fully "looking around".
+        lookBlend = Mathf.Clamp01((Mathf.Abs(lookYaw) + Mathf.Abs(lookPitch)) / 30f);
     }
 
     void UpdateGroundNormal(float dt)
