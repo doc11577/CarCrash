@@ -137,8 +137,14 @@ public class CarController : MonoBehaviour
     [SerializeField] float debugSpeed;
 
     Rigidbody rb;
-    CarInput input;
     float steerAngle;
+
+    /// <summary>
+    /// Who is driving. Defaults to whatever <see cref="ICarDriver"/> is on this GameObject —
+    /// normally <see cref="CarInput"/> — and can be replaced at runtime, which is how a traffic
+    /// car swaps the keyboard for an AI without the controller knowing the difference.
+    /// </summary>
+    public ICarDriver Driver { get; set; }
 
     /// <summary>Forward speed in metres per second. Negative when reversing.</summary>
     public float ForwardSpeed { get; private set; }
@@ -152,7 +158,7 @@ public class CarController : MonoBehaviour
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-        input = GetComponent<CarInput>();
+        Driver = GetComponent<ICarDriver>();
         rb.centerOfMass += centreOfMassOffset;
     }
 
@@ -165,9 +171,9 @@ public class CarController : MonoBehaviour
         Speed = velocity.magnitude;
         debugSpeed = Speed;
 
-        float throttle  = input != null ? input.Throttle : 0f;
-        float steerWish = input != null ? input.Steer : 0f;
-        bool handbrake  = input != null && input.Handbrake;
+        float throttle  = Driver != null ? Driver.Throttle : 0f;
+        float steerWish = Driver != null ? Driver.Steer : 0f;
+        bool handbrake  = Driver != null && Driver.Handbrake;
 
         UpdateSteering(steerWish, dt);
 

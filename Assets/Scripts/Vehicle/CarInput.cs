@@ -6,7 +6,7 @@ using UnityEngine.InputSystem;
 /// so that split-screen (and later, AI traffic) can drive the same car by writing to the
 /// same fields without any of them knowing about a keyboard.
 /// </summary>
-public class CarInput : MonoBehaviour
+public class CarInput : MonoBehaviour, ICarDriver
 {
     public enum Scheme
     {
