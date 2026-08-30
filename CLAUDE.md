@@ -149,14 +149,34 @@ is done and has been deleted; what follows is only what is still open.
 
 ### State on disk
 
-Nothing is committed. Uncommitted: `tools/blender/` (3 scripts),
-`Assets/Art/Vehicles/CosmoCars/`, `Assets/Art/Vehicles/BMW-E30/`,
-`Assets/Settings/CarBodySlip.physicsMaterial.physicMaterial`, **three new scripts
-(`Damage/CarDeformation.cs`, `Damage/CarGlass.cs`, `Damage/CarInteriorProps.cs`)**, and edits to
-`CarController.cs`, `CarDamage.cs`, `DebrisPool.cs`, `ChaseCamera.cs`, `CLAUDE.md`,
-`CREDITS.md`. The E30 FBX meta was changed to `isReadable: 1`, which deformation requires.
-`SampleScene.unity` carries the E30 wiring plus a small **pre-existing, unrelated** loading-bar
-transform change from an earlier session.
+**All committed as of 2026-08-30.** `0dba3b5` is the whole E30 import, the Blender pipeline,
+the three damage scripts and the scene wiring; `427dcf4` is scoring. The E30 FBX meta carries
+`isReadable: 1`, which deformation requires. `SampleScene.unity` holds the E30 wiring plus a
+small **pre-existing, unrelated** loading-bar transform change from an earlier session.
+
+`Assets/Models/` is an empty leftover folder with an orphan `.meta`. Delete it in the Editor.
+
+**Nothing in the scoring commit has been run.** It compiles — verified by building all 13
+scripts with Unity's own Roslyn against the real 6.3 assemblies, zero errors and zero warnings
+— but compiling is not running, and the Editor wiring below has not been done.
+
+#### Compile-checking without opening Unity
+
+Worth knowing, because it caught an obsolete API before it reached the Editor:
+
+```bash
+UD="/c/Program Files/Unity/Hub/Editor/6000.3.8f1/Editor/Data"
+# Build a response file (paths have spaces, so plain -r: args get split):
+#   -r: every $UD/Managed/UnityEngine/UnityEngine*Module.dll
+#   -r: Library/ScriptAssemblies/{UnityEngine.UI,Unity.TextMeshPro,Unity.InputSystem}.dll
+#   -r: $UD/NetStandard/ref/2.1.0/netstandard.dll
+#   then every Assets/Scripts/**/*.cs
+dotnet "$UD/DotNetSdkRoslyn/csc.dll" @args.rsp
+```
+
+Needs `Library/ScriptAssemblies/` to exist, so the project must have been opened at least once.
+Catches syntax, signature and obsolete-API errors in seconds. It cannot catch anything about
+behaviour, serialization or the Inspector.
 
 ### Confirmed working in play mode
 
@@ -196,6 +216,11 @@ after the last play test.
   `CarInteriorProps` exist, and why dent depth is not worth pushing further.
 
 ### Open, in rough priority order
+
+0. **Import TMP Essential Resources, then wire and play-test scoring.**
+   Window → TextMeshPro → Import TMP Essential Resources (once), then add `RunScore` and
+   `ScoreHud` to **GameManager** and drag `Car` into `RunScore.Player Car`. Nothing in the
+   scoring commit has ever run.
 
 1. **Play-test the suspension numbers.** `bumpStopStrength` 60000 and `antiRollStrength` 4000
    are reasoned starting points, never driven. Inside wheels lifting mid-corner → drop
@@ -238,7 +263,10 @@ Build order — expensive unknowns first, content last:
    ram a wall and confirm panels dent, and panels and wheels detach · add in-game CC-BY attribution
    for the E30 · rebuild and re-measure download size ·
    **get a real frame-rate number off a school Chromebook**
-3. **Next** — cheap traffic · scoring & gears · garage and buy · persistence
+3. **Next** — **feature order agreed 2026-08-30: scoring → first real map → menu and garage →
+   traffic.** Scoring is written and committed (`427dcf4`) but unrun. Traffic is deliberately
+   last, which means the scoring numbers get tuned twice: once now against walls, and again
+   once there are cars to hit, which will be the biggest source of points in the finished game.
 4. **Later** — split-screen 2P · juice · audio · more content · ship pass
 
 ### Architecture calls already made
@@ -358,6 +386,9 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 | `Damage/CarInteriorProps.cs` | Generates the dark engine bay / cabin a missing panel reveals. |
 | `Damage/DebrisPool.cs` | Pools, caps, expires and sleeps detached parts. `Track()` adopts real panels. |
 | `Game/RunRestart.cs` | R reloads the scene behind a loading bar. |
+| `Game/RunScore.cs` | Damage and lost parts → gears. Combo multiplier. Banks the run on scene unload. |
+| `Game/ScoreHud.cs` | Gear counter, combo bar and floating popups. Builds its own canvases in code. |
+| `Game/PlayerWallet.cs` | Persistent gear balance and best run, in PlayerPrefs. |
 | `Debug/PerfReadout.cs` | On-screen FPS/device readout. **Delete before shipping.** |
 
 ### Scene setup (SampleScene)
@@ -399,7 +430,7 @@ That is the intended behaviour. The cost is that a low wall lets the nose clip i
 0.94 m before contact. Lower the Nose Center Y toward `0.85` if that reads badly.
 - **Part anchors** `PartHood`, `PartBumperF/R`, `PartDoorL/R`. Wheel anchors double as
   the wheel part anchors.
-- **GameManager** — `RunRestart`, `DebrisPool`.
+- **GameManager** — `RunRestart`, `DebrisPool`, `RunScore` (Player Car = `Car`), `ScoreHud`.
 - **Main Camera** — `ChaseCamera` (target = Car), `PerfReadout`.
 
 Layer discipline, because every mask bug in this project looks like a physics bug:
@@ -901,6 +932,86 @@ Arcade crash-driving, third-person chase cam.
 - **Run** — spawn at the top of a long downhill mountain road, AI traffic ahead
 - **Goal** — bomb downhill and destroy the car; damage earns gears; gears buy more cars
 - **Damage** — deformable panels plus detachable parts: doors, hood, bumpers, wheels
+
+### Scoring — built 2026-08-30
+
+**Gears are the score and the currency at once.** `RunScore` converts damage into gears live;
+`PlayerWallet` banks the run into PlayerPrefs when the scene unloads. The reference game shows
+totals around **200 gears at the end of a long run**, which is what `gearsPerDamage = 0.02`
+is sized against: a measured wall hit is ~700 damage, so one big hit is worth ~14 gears at x1.
+
+Two payouts, deliberately different in feel:
+
+- **Damage** — every qualifying impact, scaled by the combo multiplier. The steady drip that
+  keeps the counter moving.
+- **Parts** — a lump sum on detachment, `startingHealth * gearsPerPartHealth`. **Derived from
+  health rather than a per-part Inspector field**, so there is nothing to wire per part and it
+  is already proportional to how hard the part was to remove: a 160-health bumper pays 40, a
+  60-health mirror pays 15. Add an override field only if a part ever needs to break that rule.
+
+Decisions that are load-bearing:
+
+- **`CarDamage.Damaged` carries a `sustained` flag, and the combo ignores sustained hits.**
+  `OnCollisionStay` fires every `sustainedInterval` (0.08 s), so a grind down a wall raises
+  ~12 damage events a second. Feeding those to the combo takes it from x1 to the x5 cap in
+  under half a second of scraping and makes the entire mechanic free. Sustained damage still
+  **scores** — it just cannot build a combo. `CarGlass` also subscribes to this event and
+  ignores the flag.
+- **`comboRearmInterval` (0.2 s) exists because the car has THREE box colliders.** One wall can
+  raise three `OnCollisionEnter` events in the same frame, which would triple-count the combo.
+  Note the damage itself is still counted three times — that is pre-existing behaviour and
+  arguably correct, since three colliders touching is a bigger hit.
+- **The popup shows the multiplier in force when the hit landed**, not the one after the combo
+  climbs, or it prints a number that was never added to the score.
+- **`RunScore.Bank()` runs from `OnDestroy`, not from `RunRestart`.** Every exit path — restart,
+  quit, returning to a menu — unloads the scene, so banking there catches all of them. Guarded
+  so it cannot double-pay.
+- **Traffic will register itself.** `Register()` / `Unregister()` are public for the spawner to
+  call. Do not add traffic cars to an Inspector list, and do not auto-find `CarDamage` — once
+  traffic exists, a find would pick an arbitrary car.
+
+#### The HUD is built in code, and that is deliberate
+
+`ScoreHud` creates its canvases, text and bar in `Awake`. A hand-built Canvas is a dozen
+GameObjects whose anchors, pivots and font sizes can all be silently wrong in a scene file and
+cannot be reviewed in a diff. Building it in code makes the Editor wiring a single component
+add. The cost is that art-directing it means editing numbers in the file.
+
+- **TWO canvases, not one.** A uGUI canvas rebuilds its whole batch when any element changes.
+  The counter updates a few times a second; popups move every frame. On one canvas the popups
+  would rebuild the counter every frame. Static canvas: label + counter. Dynamic canvas:
+  multiplier, combo bar, popups.
+- **No `GraphicRaycaster`** on either — nothing is clickable, and a raycaster costs a hit test
+  per pointer event for nothing. Add one only when the garage needs buttons.
+- **Popups are a fixed pooled array** (`popupCount`, 8), reused round-robin. A pile-up recycles
+  the oldest rather than instantiating a ninth.
+- **The counter only pushes a string when its INTEGER changes**, via `SetText("{0}", n)`, which
+  is the allocation-free overload. Assigning `n.ToString()` would allocate on most frames of a
+  crash.
+- **Popups carry no outline.** A TMP outline is a material property, so enabling one
+  instantiates a material per popup and turns one draw call into eight. The cost is that a
+  popup over a pale road is harder to read; revisit with a single shared outlined material if
+  it turns out to matter.
+- **Popups rise in WORLD space**, so they stay pinned to the spot on the road where the hit
+  happened rather than sliding with the camera. `screen.z <= 0` is checked because
+  `WorldToScreenPoint` mirrors points behind the camera — without it, a hit you have driven
+  past reappears on the wrong side of the screen.
+
+**`ScoreHud` needs TMP Essential Resources imported.** TMP's *code* ships inside
+`com.unity.ugui` 2.0.0 so everything compiles, but the default font asset lives in
+`Assets/Resources` and is created by **Window → TextMeshPro → Import TMP Essential
+Resources**, run once. Without it the HUD draws nothing at all — `Awake` `Debug.LogError`s
+rather than failing silently. Costs roughly 0.3–0.6 MB in the build; **re-measure against the
+size baseline at the next build.**
+
+IMGUI was considered and rejected for the HUD. `PerfReadout` and `RestartOverlay` use it and
+should keep doing so — a debug readout and a one-off loading screen do not care. A permanent
+HUD does: IMGUI allocates every frame and costs a few percent CPU, and the next three roadmap
+items (map, menu, garage) are all text-heavy enough that building them on IMGUI would mean
+rewriting the lot.
+
+**Scoring will need re-tuning once traffic exists**, because traffic will be the biggest source
+of points in the finished game. Do not over-tune these numbers before there are cars to hit.
 
 ### Known improvements over the reference game
 
