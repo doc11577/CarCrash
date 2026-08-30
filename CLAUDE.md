@@ -1028,9 +1028,26 @@ Decisions worth keeping:
   prints the cross-section and flags any non-monotonic step.
 - **The bowl is a true HALF disc.** Its flat edge meets the corridor end, so nothing overlaps the
   last chunk into coplanar z-fighting.
-- **Obstacles are placed with the terrain's own height function** (`course_point`), so none can
-  hover or bury when the noise changes. All **static** — knockable barriers would suit the game
-  but compete with car debris for the 40-rigidbody budget.
+- **Obstacles ARE the terrain, not objects standing on it.** Kickers and humps are folds in the
+  height function. This started as separate wedge and box meshes and was wrong twice: they read
+  as popcorn scattered on the track, and the hand-written wedge winding was **backwards** — the
+  bottom face `(0,1,3,2)` winds counter-clockwise seen from above so its normal pointed up into
+  the solid — so Unity culled the outside and the ramps rendered **inside out**. Terrain
+  features have neither failure mode: the same mesh cannot be inverted relative to itself,
+  cannot z-fight against itself, and cannot look placed.
+
+  Overlapping features take the **MAX, never the sum**. Summing two that overlap builds a spike
+  at the intersection, which is a launch ramp nobody designed.
+
+- **Boulders stay real geometry, but their centre sits BELOW the surface.** A terrain dome is
+  smooth and reads as another dune; the faceted silhouette is the whole point of a rock. What
+  stops it looking dropped on is the outcrop swell raised under it plus sinking the centre by
+  0.28 of its radius, so the ground line cuts across it. **Normals are recalculated, never
+  trusted** — that is precisely what the ramp got wrong, and a rock rendered inside out looks
+  like a hole in the world.
+
+- Everything is **static**. Knockable barriers would suit a crash game but compete with car
+  debris for the 40-rigidbody budget.
 - **Surface noise stops at ~4 m wavelength.** A 2 m cell cannot represent finer without
   aliasing, so rock detail belongs in the texture and in scattered boulders, not in the grid.
 - **`bake_space_transform=True` on export**, which `split_car.py` never did. Every chunk arrives
