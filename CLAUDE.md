@@ -1050,8 +1050,10 @@ terraced walls, then scatters obstacles. **Quarry01**, the first map:
 | Length / drop | 1,800 m, 270 m (15% average, 23.1% steepest) |
 | Drive time | ~90 s at the 20 m/s a crash course averages (`topSpeed` is 32) |
 | Tightest turn | 99 m radius |
-| Corridor | 26 m drivable + 5 m shoulder, 22 m walls, 3 benches |
-| Triangles | 66,444 — 18 chunks × 3,400, bowl 2,688, obstacles 2,556 |
+| Corridor | 26 m drivable + 5 m shoulder |
+| Sides | 22 m benched quarry face, then 95 m of mountainside over 120 m (38°) |
+| Ridge | **88–146 m above the corridor**, varying along the course. Total width 308 m |
+| Triangles | **100,156** — 18 chunks × 5,200, bays 4,956, boulders 1,600 |
 
 Decisions worth keeping:
 
@@ -1060,6 +1062,24 @@ Decisions worth keeping:
   also cooks colliders faster and lets the PhysX broadphase reject most of the world.
 - **Terraced quarry benches are what make it read as excavated rock.** A smooth wall reads as a
   sand dune however much noise is on it; that is exactly how the first two renders came out.
+
+- **The sides go BENCHED FACE first, then MOUNTAINSIDE.** 22 m of quarry cut, then 95 m of
+  natural slope, so it reads as a quarry worked into a mountain rather than either one alone.
+  Added 2026-08-30 because a 22 m wall read as a trench and was low enough to launch out of.
+
+  **The crest wanders along the course and the two flanks use different noise phases.** A
+  constant height reads as an embankment however tall it is — an uneven skyline, with the two
+  sides disagreeing, is what reads as mountains. Sampled from one function they rise and fall
+  together and it reads as a channel.
+
+  **Climbing out is arithmetic, not hope.** The 54° bench face needs `1200 × 9.81 × sin 54° =
+  9,530 N` against `2 × enginePower = 6,400 N` of drive. Note this is only safe because the
+  face is steeper than the car can climb — `CarController.maxGroundAngle` is 55°, so the face
+  still counts as ground and would be drivable if it were any shallower.
+
+  The mountainside is sampled at **16 m** against the corridor's 2 m. Nothing drives on it and
+  it is mostly seen at distance; at corridor resolution it more than doubles the whole course
+  for detail nobody can resolve.
 - **Rock is FLAT-shaded, the corridor smooth.** Free, and the single biggest look change —
   smooth-shading a faceted wall averages its normals into draped fabric.
 - **Terrace the height ABOVE the shoulder, never the absolute height.** Quantising absolute
