@@ -53,20 +53,24 @@ DEFAULT_CELL = 2.0
 
 MAT_GROUND = "CourseGround"
 MAT_ROCK = "CourseRock"
+MAT_PROP = "CourseProp"
 
 # Viewport colours only -- real textures are assigned in Unity, the same way the car's are.
 THEMES = {
     "quarry": {
         "ground": (0.42, 0.38, 0.33, 1.0),
         "rock": (0.34, 0.30, 0.27, 1.0),
+        "prop": (0.55, 0.54, 0.52, 1.0),
     },
     "jungle": {
         "ground": (0.35, 0.31, 0.22, 1.0),
         "rock": (0.24, 0.30, 0.20, 1.0),
+        "prop": (0.50, 0.49, 0.45, 1.0),
     },
     "desert": {
         "ground": (0.60, 0.48, 0.33, 1.0),
         "rock": (0.52, 0.38, 0.26, 1.0),
+        "prop": (0.62, 0.58, 0.50, 1.0),
     },
 }
 
@@ -108,10 +112,22 @@ def parse_args():
     p.add_argument("--cell", type=float, default=DEFAULT_CELL,
                    help="Grid cell size in metres.")
 
-    p.add_argument("--roughness", type=float, default=0.32,
-                   help="Surface noise amplitude in metres on the drivable corridor.")
-    p.add_argument("--curviness", type=float, default=1.0,
+    p.add_argument("--roughness", type=float, default=0.55,
+                   help="Surface noise amplitude in metres on the drivable corridor. Geometry "
+                        "cannot go finer than the --cell can represent, so detail below about "
+                        "4 m belongs in the texture and in scattered boulders, not here.")
+    p.add_argument("--curviness", type=float, default=1.8,
                    help="How much the centreline snakes. 0 is straight.")
+    p.add_argument("--rollers", type=float, default=9.0,
+                   help="Amplitude in metres of zero-mean vertical undulation on top of the "
+                        "descent -- crests and compressions rather than a constant ramp. Does "
+                        "not change the total drop.")
+
+    p.add_argument("--bowl-radius", type=float, default=55.0,
+                   help="Radius of the half-circle stopping area at the bottom. 0 omits it.")
+
+    p.add_argument("--obstacles", type=float, default=1.0,
+                   help="Obstacle density multiplier. 0 generates a clean course.")
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--theme", default="quarry", choices=sorted(THEMES))
 
@@ -198,6 +214,16 @@ def build_centreline(args, samples):
 
     total = raw[-1] if raw[-1] > 1e-6 else 1.0
     heights = [-(r / total) * args.drop for r in raw]
+
+    # Rollers: zero-mean undulation on top of the descent, so the course has crests to launch
+    # off and compressions to bottom out in rather than being one constant ramp. Faded to
+    # nothing at both ends, which also means the total drop is untouched -- the spawn apron
+    # and the run-out stay exactly where the descent put them.
+    if args.rollers > 0.0:
+        for i in range(len(heights)):
+            t = i / samples
+            fade = smoothstep(0.0, 0.07, t) * (1.0 - smoothstep(0.88, 1.0, t))
+            heights[i] += (fbm(t * 5.0, args.seed + 177) - 0.5) * 2.0 * args.rollers * fade
 
     # Lateral snake. Low frequencies only: tight turns are not the point of a crash course,
     # and a radius under about 40 m is undrivable at the speeds this thing reaches.
@@ -371,10 +397,16 @@ def surface_height(args, frames, i, offset, lift):
     on_corridor = 1.0 - smoothstep(half, half + args.shoulder, abs(offset))
 
     along = i * (args.length / (len(frames) - 1))
-    fine = (noise2(along * 0.08, offset * 0.08, args.seed) - 0.5) * 2.0
-    broad = (noise2(along * 0.015, offset * 0.02, args.seed + 4409) - 0.5) * 2.0
 
-    bumps = (fine * 0.65 + broad * 1.35) * args.roughness * on_corridor
+    # Three scales, because one is the thing that reads as a smooth dune. Broad rolls carry
+    # most of the amplitude, fine breaks them up, and chatter is the shortest wavelength the
+    # grid can actually represent -- at a 2 m cell nothing under ~4 m survives sampling, so
+    # pushing this higher aliases rather than adding detail.
+    broad = (noise2(along * 0.015, offset * 0.02, args.seed + 4409) - 0.5) * 2.0
+    fine = (noise2(along * 0.08, offset * 0.08, args.seed) - 0.5) * 2.0
+    chatter = (noise2(along * 0.15, offset * 0.15, args.seed + 911) - 0.5) * 2.0
+
+    bumps = (broad * 1.25 + fine * 0.70 + chatter * 0.38) * args.roughness * on_corridor
 
     # Relief on the walls, so the benches are weathered rather than machined. Kept well under
     # one bench height (wall / benches) on purpose -- noise louder than the terracing erases
@@ -469,6 +501,241 @@ def build_chunks(args, frames):
         index += 1
 
     return created, total_tris
+
+
+def course_point(args, frames, i, offset):
+    """A point on the finished terrain surface, using exactly the mesh's own maths.
+
+    Obstacles are placed with this rather than with their own approximation, so a boulder
+    cannot end up buried or hovering when the surface noise changes.
+    """
+    origin, _tangent, right = frames[i]
+    half = args.width * 0.5
+    edge = half + args.shoulder
+    lift = wall_lift(args, abs(offset), half, edge)
+    height = surface_height(args, frames, i, offset, lift)
+    return origin + right * offset + Vector((0.0, 0.0, height))
+
+
+# ---------------------------------------------------------------------------- bowl
+
+
+def build_bowl(args, frames):
+    """A half-circle stopping bay at the bottom of the descent.
+
+    A true half disc rather than a full one: the flat diameter edge is where the corridor
+    arrives, so nothing overlaps the last chunk and there is no coplanar z-fighting at the
+    join. A rim wall runs round the curved edge and along the parts of the straight edge
+    outside the corridor mouth, so the bay catches a car instead of letting it run out the
+    sides.
+    """
+    if args.bowl_radius <= 0.0:
+        return None, 0
+
+    origin, tangent, right = frames[-1]
+    forward = Vector((tangent.x, tangent.y, 0.0))
+    if forward.length < 1e-6:
+        forward = Vector((0.0, 1.0, 0.0))
+    forward.normalize()
+
+    radius = args.bowl_radius
+    mouth = args.width * 0.5 + args.shoulder
+
+    rings = max(4, int(round(radius / args.cell)))
+    arcs = 48
+
+    verts = []
+    faces = []
+    mat_ids = []
+
+    for ri in range(rings + 1):
+        r = radius * ri / rings
+        for ai in range(arcs + 1):
+            # -90..+90 about the forward axis: the half plane ahead of the course end.
+            theta = math.radians(-90.0 + 180.0 * ai / arcs)
+            ahead = math.cos(theta) * r
+            across = math.sin(theta) * r
+
+            lift = args.wall * smoothstep(radius * 0.80, radius, r)
+
+            # Wall the straight edge too, except across the corridor mouth, or the bay simply
+            # spills back out either side of where you came in.
+            if ahead < args.cell * 1.5 and abs(across) > mouth:
+                lift = max(lift, args.wall * smoothstep(mouth, mouth + 10.0, abs(across)))
+
+            relief = (noise2(ahead * 0.05, across * 0.05, args.seed + 6101) - 0.5)
+            lift += relief * (args.wall * 0.10 if lift > 0.1 else 0.0)
+            floor_noise = relief * args.roughness * (1.0 - smoothstep(radius * 0.7, radius, r))
+
+            p = origin + forward * ahead + right * across + Vector((0.0, 0.0, lift + floor_noise))
+            verts.append((p.x, p.y, p.z))
+
+    stride = arcs + 1
+    for ri in range(rings):
+        for ai in range(arcs):
+            a = ri * stride + ai
+            b = a + 1
+            c = (ri + 1) * stride + ai
+            d = c + 1
+            faces.append((a, b, d, c))
+            mat_ids.append(1 if (radius * (ri + 1) / rings) > radius * 0.80 else 0)
+
+    mesh = bpy.data.meshes.new("CourseBowl")
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate()
+    mesh.materials.append(bpy.data.materials[MAT_GROUND])
+    mesh.materials.append(bpy.data.materials[MAT_ROCK])
+    for poly, slot in zip(mesh.polygons, mat_ids):
+        poly.material_index = slot
+
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for loop in mesh.loops:
+        v = mesh.vertices[loop.vertex_index].co
+        uv_layer.data[loop.index].uv = (v.x / 8.0, v.y / 8.0)
+
+    mesh.polygons.foreach_set("use_smooth", [slot == 0 for slot in mat_ids])
+    mesh.update()
+
+    ob = bpy.data.objects.new("CourseBowl", mesh)
+    bpy.context.collection.objects.link(ob)
+
+    return ob, sum(len(p.vertices) - 2 for p in mesh.polygons)
+
+
+# ---------------------------------------------------------------------------- obstacles
+
+
+def add_mesh(name, verts, faces, material, smooth=False):
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate()
+    mesh.materials.append(material)
+    mesh.polygons.foreach_set("use_smooth", [smooth] * len(mesh.polygons))
+    mesh.update()
+
+    ob = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(ob)
+    return ob, sum(len(p.vertices) - 2 for p in mesh.polygons)
+
+
+def add_ramp(name, base, forward, right, width, length, height, material):
+    """A wedge: rises from nothing to `height` over `length`. Kept under 30 degrees so it
+    launches the car rather than stopping it dead, and so it stays inside the
+    CarController.maxGroundAngle that decides what counts as ground."""
+    up = Vector((0.0, 0.0, 1.0))
+    hw = width * 0.5
+
+    p = [
+        base - right * hw, base + right * hw,
+        base - right * hw + forward * length, base + right * hw + forward * length,
+        base - right * hw + forward * length + up * height,
+        base + right * hw + forward * length + up * height,
+    ]
+    verts = [(v.x, v.y, v.z) for v in p]
+    faces = [(0, 1, 3, 2), (2, 3, 5, 4), (0, 2, 4), (1, 5, 3), (0, 4, 5, 1)]
+    return add_mesh(name, verts, faces, material)
+
+
+def add_block(name, base, forward, right, width, length, height, material):
+    up = Vector((0.0, 0.0, 1.0))
+    hw = width * 0.5
+    hl = length * 0.5
+
+    corners = []
+    for sz in (0.0, height):
+        for sx, sy in ((-hw, -hl), (hw, -hl), (hw, hl), (-hw, hl)):
+            v = base + right * sx + forward * sy + up * sz
+            corners.append((v.x, v.y, v.z))
+
+    faces = [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
+    return add_mesh(name, corners, faces, material)
+
+
+def add_boulder(name, centre, radius, seed, material):
+    """Low-poly rock: an icosphere pushed about by noise. 80 triangles, which is nothing, and
+    it is far better at making a course read as rocky than mesh noise on the terrain is --
+    the terrain grid physically cannot represent anything under about two cells."""
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=radius)
+
+    for k, v in enumerate(bm.verts):
+        jitter = 0.62 + 0.76 * hash01(k * 13 + seed, seed + 4523)
+        v.co *= jitter
+        # Flatten the underside so it beds into the ground instead of balancing on a point.
+        if v.co.z < 0.0:
+            v.co.z *= 0.55
+
+    verts = [(centre.x + v.co.x, centre.y + v.co.y, centre.z + v.co.z) for v in bm.verts]
+    faces = [tuple(v.index for v in f.verts) for f in bm.faces]
+    bm.free()
+
+    return add_mesh(name, verts, faces, material)
+
+
+def build_obstacles(args, frames):
+    """Scatter ramps, blocks and boulders down the corridor.
+
+    Placement is hashed from the seed, never random, so the same seed always yields the same
+    course. Nothing is placed in the first stretch (the spawn apron has to be clean, or the
+    run is over before it starts) or the last (the run-out and the bowl are where you stop).
+
+    Everything is STATIC. Knockable barriers would suit a crash game, but the standing budget
+    is 40 live rigidbodies and debris from the car already competes for those.
+    """
+    if args.obstacles <= 0.0:
+        return [], 0
+
+    rock = ensure_material(MAT_ROCK, THEMES[args.theme]["rock"])
+    prop = ensure_material(MAT_PROP, THEMES[args.theme]["prop"])
+
+    samples = len(frames) - 1
+    first = int(samples * 0.08)
+    last = int(samples * 0.90)
+
+    spacing = max(6, int(round(28.0 / args.obstacles / (args.length / samples))))
+    half = args.width * 0.5
+
+    created = []
+    tris = 0
+    n = 0
+
+    for i in range(first, last, spacing):
+        n += 1
+        roll = hash01(i * 7 + args.seed, args.seed + 61)
+        side = (hash01(i * 11 + args.seed, args.seed + 89) - 0.5) * 2.0
+        offset = side * half * 0.82
+
+        _origin, tangent, right = frames[i]
+        forward = Vector((tangent.x, tangent.y, 0.0))
+        if forward.length < 1e-6:
+            forward = Vector((0.0, 1.0, 0.0))
+        forward.normalize()
+
+        base = course_point(args, frames, i, offset)
+
+        if roll < 0.34:
+            # Ramp. Aligned with the course, so it launches you along it rather than sideways.
+            width = 4.5 + 3.5 * hash01(i * 17, args.seed)
+            length = 6.0 + 3.0 * hash01(i * 19, args.seed)
+            height = 1.9 + 1.5 * hash01(i * 23, args.seed)
+            ob, t = add_ramp(f"ObstacleRamp{n:03d}", base, forward, right,
+                             width, length, height, prop)
+        elif roll < 0.55:
+            width = 1.6 + 2.4 * hash01(i * 29, args.seed)
+            length = 1.4 + 1.6 * hash01(i * 31, args.seed)
+            height = 1.0 + 1.4 * hash01(i * 37, args.seed)
+            ob, t = add_block(f"ObstacleBlock{n:03d}", base - Vector((0.0, 0.0, 0.15)),
+                              forward, right, width, length, height, prop)
+        else:
+            radius = 1.3 + 2.0 * hash01(i * 41, args.seed)
+            ob, t = add_boulder(f"ObstacleRock{n:03d}",
+                                base + Vector((0.0, 0.0, radius * 0.35)),
+                                radius, i, rock)
+
+        created.append(ob)
+        tris += t
+
+    return created, tris
 
 
 # ---------------------------------------------------------------------------- export
@@ -585,9 +852,15 @@ def render_preview(path, frames, args):
     view_dir = Vector((0.62, -0.60, 0.50)).normalized()
     shoot(centre + view_dir * distance, centre, root + ext, lens=lens)
 
-    # Eye height on the corridor, a quarter of the way down, looking ahead.
-    ahead = frames[min(len(frames) - 1, len(frames) // 4 + 60)][0]
-    shoot(quarter + Vector((0.0, 0.0, 3.0)), ahead + Vector((0.0, 0.0, 2.0)),
+    # Roughly where ChaseCamera sits: behind and above the corridor, looking down it. At eye
+    # height on the centreline the camera ends up inside whichever obstacle happens to be
+    # there, which shows a grey slab and nothing else.
+    q = len(frames) // 4
+    _, q_tangent, _ = frames[q]
+    q_forward = Vector((q_tangent.x, q_tangent.y, 0.0)).normalized()
+    ahead = frames[min(len(frames) - 1, q + 70)][0]
+    shoot(quarter - q_forward * 26.0 + Vector((0.0, 0.0, 9.0)),
+          ahead + Vector((0.0, 0.0, 2.0)),
           root + "_road" + ext, lens=32.0)
 
     # Across the course, not down it. The road shot looks along the corridor, so the walls are
@@ -604,22 +877,54 @@ def render_preview(path, frames, args):
 # ---------------------------------------------------------------------------- report
 
 
-def report(args, frames, chunks, total_tris, step):
+def uphill_check(frames):
+    """Worst UPHILL gradient anywhere on the course.
+
+    Rollers add zero-mean undulation on top of the descent, and if their amplitude beats the
+    local descent the course starts climbing -- which on a downhill run means arriving at a
+    hill with no throttle and stopping. Measured rather than assumed, because it depends on
+    --rollers and --drop together and neither one alone tells you.
+    """
+    worst = 0.0
+    where = 0.0
+    for i in range(len(frames) - 1):
+        a = frames[i][0]
+        b = frames[i + 1][0]
+        run = math.hypot(b.x - a.x, b.y - a.y)
+        if run < 1e-6:
+            continue
+        climb = (b.z - a.z) / run
+        if climb > worst:
+            worst = climb
+            where = i / (len(frames) - 1)
+    return worst, where
+
+
+def report(args, frames, chunks, total_tris, step,
+           bowl=None, bowl_tris=0, obstacles=None, obstacle_tris=0):
     radius = min_turn_radius(frames, step)
     grade = max_grade(frames)
+    climb, climb_at = uphill_check(frames)
 
+    obstacles = obstacles or []
     start = frames[0][0]
     end = frames[-1][0]
     per_chunk = total_tris / max(1, len(chunks))
+    everything = total_tris + bowl_tris + obstacle_tris
 
     print("\n=== COURSE MEASURED ===")
     print(f"  centreline length     {args.length:.0f} m")
     print(f"  vertical drop         {args.drop:.0f} m  ({args.drop / args.length * 100:.1f}% average)")
-    print(f"  steepest gradient     {grade * 100:.1f}%")
+    print(f"  steepest descent      {grade * 100:.1f}%")
+    print(f"  steepest CLIMB        {climb * 100:.1f}%  at {climb_at * 100:.0f}% along"
+          f"   {'(fine)' if climb < 0.08 else '(<-- may stall a slow car)'}")
     print(f"  tightest turn radius  {radius:.0f} m   (under ~40 m is undrivable at speed)")
     print(f"  corridor width        {args.width:.0f} m drivable, {args.shoulder:.0f} m shoulder")
+    print(f"  rollers               {args.rollers:.0f} m amplitude")
     print(f"  chunks                {len(chunks)} of {args.chunk:.0f} m")
-    print(f"  triangles             {total_tris:,} total, {per_chunk:,.0f} per chunk")
+    print(f"  stopping bowl         {'radius ' + str(int(args.bowl_radius)) + ' m, ' + f'{bowl_tris:,} tris' if bowl else 'none'}")
+    print(f"  obstacles             {len(obstacles)}, {obstacle_tris:,} tris")
+    print(f"  triangles             {everything:,} total, {per_chunk:,.0f} per terrain chunk")
     print(f"  drive time at 20 m/s  {args.length / 20.0:.0f} s")
 
     # The cross-section printed as numbers, because a render looking down the corridor cannot
@@ -677,8 +982,12 @@ def main():
     frames = build_centreline(args, samples)
     chunks, total_tris = build_chunks(args, frames)
 
+    bowl, bowl_tris = build_bowl(args, frames)
+    obstacles, obstacle_tris = build_obstacles(args, frames)
+
     export_fbx(os.path.abspath(args.output))
-    report(args, frames, chunks, total_tris, step)
+    report(args, frames, chunks, total_tris, step,
+           bowl, bowl_tris, obstacles, obstacle_tris)
 
     if args.preview:
         render_preview(os.path.abspath(args.preview), frames, args)

@@ -58,6 +58,14 @@ public class CarController : MonoBehaviour
              "Turn off only to compare against the old behaviour.")]
     public bool wheelSphereCast = true;
 
+    [Tooltip("Steepest surface, in degrees from the car's up, that a SPHERE hit is allowed to " +
+             "count as ground. Anything steeper is a wall the sphere brushed on its way past, " +
+             "not something the tyre is resting on, and the cast falls back to a straight ray. " +
+             "Without this, scraping a tilted face makes that wheel visibly climb it. Raise it " +
+             "and ledge-climbing comes back; lower it much below ~45 and legitimate ramps stop " +
+             "counting as ground.")]
+    [Range(20f, 89f)] public float maxGroundAngle = 55f;
+
     [Tooltip("Stiffness. Too low and the car wallows; too high and it skips over bumps.")]
     public float springStrength = 9000f;
 
@@ -233,22 +241,41 @@ public class CarController : MonoBehaviour
         float overshoot = wheelRadius;
         Vector3 castStart = origin + transform.up * overshoot;
 
-        bool grounded;
-        RaycastHit hit;
+        RaycastHit hit = default;
+        bool sphereHit = false;
 
         if (wheelSphereCast)
         {
             // The sphere accounts for its own radius, so the sweep length is travel alone
             // (plus the overshoot, which is subtracted back off below).
-            grounded = Physics.SphereCast(castStart, wheelRadius, down, out hit,
-                                          suspensionTravel + overshoot,
-                                          groundMask, QueryTriggerInteraction.Ignore);
+            if (Physics.SphereCast(castStart, wheelRadius, down, out RaycastHit swept,
+                                   suspensionTravel + overshoot,
+                                   groundMask, QueryTriggerInteraction.Ignore)
+                && Vector3.Angle(swept.normal, transform.up) <= maxGroundAngle)
+            {
+                hit = swept;
+                sphereHit = true;
+            }
         }
-        else
+
+        // A sphere sweep reports whatever the sphere TOUCHES, which includes anything beside
+        // the wheel as well as under it. Graze a tilted face and it returns a contact point
+        // well above the ground the tyre is actually on, the spring reads that as compression
+        // and lifts the corner -- the wheel visibly climbs a ledge it only brushed.
+        //
+        // Rejecting steep normals and falling back to a straight ray fixes it without giving
+        // up what the sphere is here for: a ray can only ever report what is directly
+        // beneath, so it cannot be fooled sideways, and the sphere still handles seams and
+        // edges everywhere that it is genuinely looking at ground.
+        //
+        // The fallback costs one raycast, and only in the frames where a wheel is near a wall.
+        bool grounded = sphereHit;
+        if (!grounded)
         {
-            grounded = Physics.Raycast(castStart, down, out hit,
+            grounded = Physics.Raycast(castStart, down, out RaycastHit straight,
                                        suspensionTravel + wheelRadius + overshoot,
                                        groundMask, QueryTriggerInteraction.Ignore);
+            if (grounded) hit = straight;
         }
 
         if (!grounded)
@@ -264,7 +291,7 @@ public class CarController : MonoBehaviour
         // Both casts answer "how far did the wheel centre travel before contact", but by
         // different routes: the sphere sweep already excludes the radius, the ray does not.
         // Both then give back the overshoot. Negative means compressed past the stop.
-        float centreTravel = (wheelSphereCast ? hit.distance : hit.distance - wheelRadius) - overshoot;
+        float centreTravel = (sphereHit ? hit.distance : hit.distance - wheelRadius) - overshoot;
 
         // Only a degenerate hit -- distance 0, meaning the sphere was overlapping at the very
         // start of the sweep -- has a meaningless point. An over-compressed corner is a real
