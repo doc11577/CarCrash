@@ -619,16 +619,25 @@ def feature_lift(feat, along, lateral):
     if abs(lateral) >= half_w:
         return 0.0
 
-    # Fade to nothing at the edges, so a feature blends into the corridor instead of standing
-    # on it with a vertical rim.
-    fade = 1.0 - smoothstep(half_w * 0.55, half_w, abs(lateral))
+    # Fade to nothing at the edges over a wide band, so a feature blends into the corridor
+    # instead of standing on it behind a near-vertical rim. See the lip note below -- the
+    # sides are the same problem and want the same answer.
+    fade = 1.0 - smoothstep(half_w * 0.35, half_w, abs(lateral))
     half_l = feat["length"] * 0.5
 
     if feat["kind"] == "kicker":
-        # Rises along the course, then falls away over one cell. That short back face is the
-        # lip -- it is what actually launches the car, and it is deliberately much sharper
-        # than the approach.
-        lip = 2.5
+        # Rises along the course, then falls away. That back face is the lip, and it is what
+        # launches the car.
+        #
+        # It used to drop over a flat 2.5 m, which on a 3.4 m kicker is about 54 degrees. THE
+        # TERRAIN IS A HEIGHTFIELD -- one surface with a top and no underside -- so a face
+        # that steep is somewhere the car can get beneath, and beneath it there is no geometry
+        # and no backface: you see straight through the ramp and pass into it. Scaling the lip
+        # with the height keeps every face near 34 degrees, which is solid from both sides.
+        #
+        # It still launches. At 20 m/s the ground falling away at 34 degrees is plenty of air;
+        # what makes a kicker throw a car is the speed and the rise, not a cliff at the end.
+        lip = max(4.0, feat["height"] * 1.5)
         if along < -half_l or along > half_l + lip:
             return 0.0
         if along <= half_l:
@@ -945,6 +954,36 @@ def uphill_check(frames):
     return worst, where
 
 
+def steepest_feature_face(args, listing, step):
+    """Steepest face any terrain feature creates, sampled at the real grid resolution.
+
+    Worth measuring rather than reasoning about, because it is the number that decides whether
+    a kicker is solid. The terrain is a heightfield: one surface, no underside. Past about 60
+    degrees the car can get beneath a face, and under a heightfield there is nothing to see and
+    nothing to hit -- you look straight through the ramp and drive into it.
+    """
+    worst = 0.0
+    culprit = "none"
+
+    for feat in listing:
+        span = max(feat["length"], feat["width"]) * 0.5 + 8.0
+
+        for axis, spacing in (("along", step), ("across", args.cell)):
+            n = int(span / spacing) + 2
+            previous = None
+            for k in range(-n, n + 1):
+                d = k * spacing
+                h = feature_lift(feat, d, 0.0) if axis == "along" else feature_lift(feat, 0.0, d)
+                if previous is not None:
+                    slope = abs(h - previous) / spacing
+                    if slope > worst:
+                        worst = slope
+                        culprit = f"{feat['kind']} {axis}"
+                previous = h
+
+    return math.degrees(math.atan(worst)), culprit
+
+
 def report(args, frames, chunks, total_tris, step,
            bowl=None, bowl_tris=0, obstacles=None, obstacle_tris=0, listing=None):
     radius = min_turn_radius(frames, step)
@@ -974,7 +1013,11 @@ def report(args, frames, chunks, total_tris, step,
         kinds[feat["kind"]] = kinds.get(feat["kind"], 0) + 1
     shaped = ", ".join(f"{v} {k}" for k, v in sorted(kinds.items())) or "none"
 
+    face_deg, culprit = steepest_feature_face(args, listing, step) if listing else (0.0, "none")
+    face_note = "solid from both sides" if face_deg < 60.0 else "<-- CAR CAN GET UNDER THIS"
+
     print(f"  terrain features      {len(listing)} ({shaped}) -- folded into the ground, no meshes")
+    print(f"  steepest feature face {face_deg:.0f} deg ({culprit})   {face_note}")
     print(f"  boulder meshes        {len(obstacles)}, {obstacle_tris:,} tris")
     print(f"  triangles             {everything:,} total, {per_chunk:,.0f} per terrain chunk")
     print(f"  drive time at 20 m/s  {args.length / 20.0:.0f} s")
