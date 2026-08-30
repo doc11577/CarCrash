@@ -602,7 +602,7 @@ def course_point(args, frames, i, offset, features=None, step=1.0):
 # ---------------------------------------------------------------------------- bowl
 
 
-def build_bowl(args, frames, at_start=False):
+def build_bowl(args, frames, at_start=False, features=None, step=1.0):
     """A half-circle bay: the stopping area at the bottom, or the spawn bay at the top.
 
     A true half disc rather than a full one: the flat diameter edge is where the corridor
@@ -631,9 +631,25 @@ def build_bowl(args, frames, at_start=False):
     if at_start:
         forward = -forward
 
-    mouth = args.width * 0.5 + args.shoulder
+    station = 0 if at_start else len(frames) - 1
+    half = args.width * 0.5
+    edge = half + args.shoulder
+    mouth = edge
 
+    # How far out the corridor's own cross-section reaches. Past this the bay is wider than the
+    # course and has to close itself; inside it, the chunk already does.
+    outer = edge + args.wall_run
+
+    # SNAP THE RADIUS TO A WHOLE NUMBER OF CELLS. The seam blend above only gives a watertight
+    # join because the bay's diameter samples land on the same coordinates as the chunk's
+    # columns, and they only do that if the radial step is exactly --cell.
+    #
+    # Unsnapped this silently half-works: 42 / 2 gives rings 21 and a step of exactly 2, so the
+    # start bay lines up, while 55 / 2 rounds to 28 rings and a step of 1.964, so every vertex
+    # along the finish bowl's mouth sits between two chunk columns -- T-junctions, and a hairline
+    # crack at each one. Snapping 55 to 56 costs a metre of radius nobody will notice.
     rings = max(4, int(round(radius / args.cell)))
+    radius = rings * args.cell
     arcs = 48
 
     verts = []
@@ -666,8 +682,24 @@ def build_bowl(args, frames, at_start=False):
             relief = (noise2(ahead * 0.05, across * 0.05, args.seed + 6101) - 0.5)
             lift += relief * (args.wall * 0.10 if lift > 0.1 else 0.0)
             floor_noise = relief * args.roughness * (1.0 - smoothstep(radius * 0.7, radius, r))
+            height = lift + floor_noise
 
-            p = origin + forward * ahead + right * across + Vector((0.0, 0.0, lift + floor_noise))
+            # BLEND TO THE CORRIDOR CROSS-SECTION AT THE MOUTH, or the two meshes meet at the
+            # same plane with heights from two different formulas and leave a ragged gap you
+            # can see the horizon through.
+            #
+            # At ahead = 0 this evaluates the chunk's OWN height function at the same station,
+            # so the shared edge matches exactly rather than approximately. The vertices line
+            # up too: the chunk's columns and the bay's diameter points are both even
+            # multiples of --cell, so there are no T-junctions to crack open either.
+            blend = smoothstep(0.0, radius * 0.55, ahead)
+            if blend < 1.0:
+                seam = surface_height(args, frames, station, across,
+                                      wall_lift(args, abs(across), half, edge),
+                                      features, step)
+                height = seam + (height - seam) * blend
+
+            p = origin + forward * ahead + right * across + Vector((0.0, 0.0, height))
             verts.append((p.x, p.y, p.z))
 
     stride = arcs + 1
@@ -710,10 +742,11 @@ def build_bowl(args, frames, at_start=False):
         faces.append((t0, b0, b1, t1) if at_start else (t0, t1, b1, b0))
         mat_ids.append(1)
 
-    # The straight diameter edge, but only OUTSIDE the corridor mouth -- skirting across the
-    # mouth would wall off the entrance to the bay.
+    # The straight diameter edge, but only where the bay is WIDER than the corridor's own
+    # cross-section. Inside that the chunk's geometry and its skirt already close things off,
+    # and a skirt here would stand as a wall across the mouth you drive through.
     for ri in range(rings):
-        if radius * (ri + 1) / rings <= mouth:
+        if radius * (ri + 1) / rings <= outer:
             continue
 
         lo0, lo1 = ri * stride, (ri + 1) * stride
@@ -1159,8 +1192,11 @@ def report(args, frames, chunks, total_tris, step,
     print(f"  corridor width        {args.width:.0f} m drivable, {args.shoulder:.0f} m shoulder")
     print(f"  rollers               {args.rollers:.0f} m amplitude")
     print(f"  chunks                {len(chunks)} of {args.chunk:.0f} m")
-    print(f"  start bay             {'radius ' + str(int(args.start_radius)) + ' m, ' + f'{bay_tris:,} tris' if bay else 'none'}")
-    print(f"  stopping bowl         {'radius ' + str(int(args.bowl_radius)) + ' m, ' + f'{bowl_tris:,} tris' if bowl else 'none'}")
+    def snapped(r):
+        return max(4, int(round(r / args.cell))) * args.cell
+
+    print(f"  start bay             {f'radius {snapped(args.start_radius):.0f} m (asked {args.start_radius:.0f}, snapped to a whole cell), {bay_tris:,} tris' if bay else 'none'}")
+    print(f"  stopping bowl         {f'radius {snapped(args.bowl_radius):.0f} m (asked {args.bowl_radius:.0f}, snapped to a whole cell), {bowl_tris:,} tris' if bowl else 'none'}")
     print(f"  outer skirt           {args.skirt:.0f} m below the corridor floor")
     listing = listing or []
     kinds = {}
@@ -1244,8 +1280,8 @@ def main():
     features, listing = plan_features(args, frames)
 
     chunks, total_tris = build_chunks(args, frames, features, step)
-    bowl, bowl_tris = build_bowl(args, frames)
-    bay, bay_tris = build_bowl(args, frames, at_start=True)
+    bowl, bowl_tris = build_bowl(args, frames, False, features, step)
+    bay, bay_tris = build_bowl(args, frames, True, features, step)
     boulders, boulder_tris = build_boulders(args, frames, features, listing, step)
 
     export_fbx(os.path.abspath(args.output))
