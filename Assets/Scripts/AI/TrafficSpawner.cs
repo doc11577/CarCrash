@@ -45,14 +45,17 @@ public class TrafficSpawner : MonoBehaviour
     public float dropHeight = 0.8f;
 
     [Header("Paint")]
-    [Tooltip("Cycled through in order. Cars are tinted so the field is not four white E30s.")]
+    [Tooltip("Cycled through in order. Cars are tinted so the field is not four white E30s.\n\n" +
+             "Deliberately muted. These multiply a near-white body texture, so a saturated " +
+             "primary comes out as flat poster colour and the car reads as a moulded toy — real " +
+             "car paint is darker and greyer than people expect.")]
     public Color[] palette =
     {
-        new Color(0.75f, 0.12f, 0.12f),
-        new Color(0.13f, 0.35f, 0.72f),
-        new Color(0.15f, 0.55f, 0.25f),
-        new Color(0.85f, 0.62f, 0.10f),
-        new Color(0.35f, 0.13f, 0.55f),
+        new Color(0.48f, 0.09f, 0.11f),   // deep red
+        new Color(0.12f, 0.20f, 0.40f),   // navy
+        new Color(0.10f, 0.26f, 0.17f),   // racing green
+        new Color(0.62f, 0.55f, 0.38f),   // champagne
+        new Color(0.24f, 0.25f, 0.27f),   // graphite
     };
 
     [Header("Scoring")]
