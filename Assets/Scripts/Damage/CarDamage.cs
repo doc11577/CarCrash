@@ -98,8 +98,16 @@ public class CarDamage : MonoBehaviour
     [Tooltip("Only collisions with these layers can cause damage. Exclude the car's own layer.")]
     public LayerMask damagingLayers = ~0;
 
-    /// <summary>Raised on every damaging impact, with the damage dealt. Hook scoring here.</summary>
-    public event Action<float, Vector3> Damaged;
+    /// <summary>
+    /// Raised on every damaging impact: the damage dealt, where it landed, and whether it was
+    /// SUSTAINED contact rather than a fresh hit. Hook scoring here.
+    /// </summary>
+    /// <remarks>
+    /// The sustained flag matters to anything that rewards impacts. A fresh hit raises this
+    /// once; a grind down a wall raises it every <see cref="sustainedInterval"/> (0.08 s), so a
+    /// combo meter that counted both would reach its cap in half a second of scraping.
+    /// </remarks>
+    public event Action<float, Vector3, bool> Damaged;
 
     /// <summary>Raised when a part comes off, with the part that went.</summary>
     public event Action<Part> PartLost;
@@ -163,7 +171,7 @@ public class CarDamage : MonoBehaviour
 
     void OnCollisionEnter(Collision collision)
     {
-        HandleImpact(collision, 1f);
+        HandleImpact(collision, 1f, false);
     }
 
     /// <summary>
@@ -188,10 +196,10 @@ public class CarDamage : MonoBehaviour
         if (Time.time < nextSustainedAt) return;
 
         nextSustainedAt = Time.time + sustainedInterval;
-        HandleImpact(collision, sustainedScale);
+        HandleImpact(collision, sustainedScale, true);
     }
 
-    void HandleImpact(Collision collision, float scale)
+    void HandleImpact(Collision collision, float scale, bool sustained)
     {
         if ((damagingLayers.value & (1 << collision.gameObject.layer)) == 0) return;
 
@@ -206,7 +214,7 @@ public class CarDamage : MonoBehaviour
         lastDamage = damage;
 
         TotalDamage += damage;
-        Damaged?.Invoke(damage, contact);
+        Damaged?.Invoke(damage, contact, sustained);
 
         // Crumple the panel before deciding whether it comes off, so a hit that happens to be
         // the fatal one still leaves its dent on the piece that flies away.
