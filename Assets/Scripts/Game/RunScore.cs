@@ -28,9 +28,10 @@ public class RunScore : MonoBehaviour
     public static RunScore Instance { get; private set; }
 
     [Header("Cars that score")]
-    [Tooltip("The player's car. Damage the player takes IS the score in this game — the run " +
-             "is about destroying your own car. Traffic will register itself at spawn through " +
-             "Register(), so leave that to the spawner rather than listing cars here.")]
+    [Tooltip("OPTIONAL OVERRIDE — normally leave this empty. The player's car finds its own way " +
+             "here: put a PlayerCar component on it and this resolves itself, including for a " +
+             "car the garage spawns mid-session, which a scene reference could never point at. " +
+             "Set this only to force scoring onto a specific car for a test.")]
     public CarDamage playerCar;
 
     [Header("Conversion")]
@@ -83,8 +84,8 @@ public class RunScore : MonoBehaviour
     public event Action<string, Vector3> Scored;
 
     [Header("Read-only — watch these in play mode")]
-    [Tooltip("Cars currently being scored. 0 means Register never ran and NOTHING can score — " +
-             "check Player Car above. 1 is correct until traffic exists.")]
+    [Tooltip("Cars currently being scored. 0 means NOTHING can score — the player's car has no " +
+             "PlayerCar component on it. 1 is correct until traffic exists.")]
     [SerializeField] int carsScoring;
 
     [Tooltip("Damage events received. Still 0 after a crash means CarDamage is not raising " +
@@ -117,8 +118,21 @@ public class RunScore : MonoBehaviour
         // Start, not Awake: a car wires up its own parts in Awake. Nothing here depends on
         // that today, but subscribing to a component that has not initialised yet is exactly
         // the ordering bug that will show up once traffic starts spawning mid-run.
+        //
+        // The player's car normally registers itself from PlayerCar.OnEnable. This picks up the
+        // other ordering — a car that was already active before this component's Awake ran, so
+        // RunScore.Instance was still null when it tried. Register is idempotent, so a car that
+        // has already registered costs nothing here.
+        if (playerCar == null && PlayerCar.Current != null) playerCar = PlayerCar.Current.Damage;
+
         if (playerCar != null) Register(playerCar);
-        else Debug.LogWarning("RunScore has no playerCar assigned — nothing will score.", this);
+
+        if (scoring.Count == 0)
+        {
+            Debug.LogWarning(
+                "RunScore has no cars to score. Add a PlayerCar component to the player's car — " +
+                "that is what announces it. Nothing will score until it does.", this);
+        }
     }
 
     /// <summary>
