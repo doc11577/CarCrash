@@ -82,6 +82,25 @@ public class RunScore : MonoBehaviour
     /// <summary>Raised when something is worth showing on screen: text, and where it happened.</summary>
     public event Action<string, Vector3> Scored;
 
+    [Header("Read-only — watch these in play mode")]
+    [Tooltip("Cars currently being scored. 0 means Register never ran and NOTHING can score — " +
+             "check Player Car above. 1 is correct until traffic exists.")]
+    [SerializeField] int carsScoring;
+
+    [Tooltip("Damage events received. Still 0 after a crash means CarDamage is not raising " +
+             "Damaged at all, so the problem is upstream of scoring — read CarDamage.lastImpulse.")]
+    [SerializeField] int impactsCounted;
+
+    [Tooltip("Gears the last impact was worth. Compare against the popup that appeared.")]
+    [SerializeField] float lastGain;
+
+    [Tooltip("Live score. If this climbs while the on-screen counter does not, the fault is in " +
+             "ScoreHud, not here.")]
+    [SerializeField] float scoreReadout;
+
+    [Tooltip("Live combo multiplier.")]
+    [SerializeField] float multiplierReadout;
+
     float comboExpiresAt;
     float comboRearmAt;
     bool banked;
@@ -113,6 +132,7 @@ public class RunScore : MonoBehaviour
         scoring.Add(car);
         car.Damaged += OnDamaged;
         car.PartLost += OnPartLost;
+        carsScoring = scoring.Count;
     }
 
     /// <summary>Stop scoring a car. Must be called before the car is destroyed or pooled.</summary>
@@ -122,11 +142,15 @@ public class RunScore : MonoBehaviour
 
         car.Damaged -= OnDamaged;
         car.PartLost -= OnPartLost;
+        carsScoring = scoring.Count;
     }
 
     void Update()
     {
         if (Multiplier > 1f && Time.time >= comboExpiresAt) Multiplier = 1f;
+
+        scoreReadout = Score;
+        multiplierReadout = Multiplier;
     }
 
     void OnDamaged(float damage, Vector3 point, bool sustained)
@@ -136,6 +160,9 @@ public class RunScore : MonoBehaviour
         // was never added to the score.
         float gained = damage * gearsPerDamage * Multiplier;
         Score += gained;
+
+        impactsCounted++;
+        lastGain = gained;
 
         // Only a FRESH impact builds the combo. Sustained contact — grinding along a wall,
         // sliding on the roof — fires every sustainedInterval (0.08 s), so letting it feed

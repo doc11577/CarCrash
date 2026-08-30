@@ -69,6 +69,15 @@ public class ScoreHud : MonoBehaviour
     [Tooltip("Font size of a popup, at a 1920x1080 reference resolution.")]
     public float popupSize = 34f;
 
+    [Header("Read-only — watch these in play mode")]
+    [Tooltip("False means the HUD never found a RunScore, so the counter is frozen at the 0 it " +
+             "was built with and nothing else here matters.")]
+    [SerializeField] bool boundToScore;
+
+    [Tooltip("The number currently on screen. If RunScore.scoreReadout is climbing and this is " +
+             "not, the fault is in this component.")]
+    [SerializeField] int shownGears;
+
     struct Floater
     {
         public TextMeshProUGUI text;
@@ -123,10 +132,13 @@ public class ScoreHud : MonoBehaviour
         if (score == null) score = RunScore.Instance;
         if (score == null)
         {
-            Debug.LogWarning("ScoreHud found no RunScore — the counter will sit at 0.", this);
+            Debug.LogError(
+                "ScoreHud found no RunScore, so the counter is frozen at 0. Add a RunScore " +
+                "component to this GameObject, or drag one into the Score field.", this);
             return;
         }
 
+        boundToScore = true;
         score.Scored += OnScored;
     }
 
@@ -271,7 +283,7 @@ public class ScoreHud : MonoBehaviour
 
     void Update()
     {
-        if (score == null) return;
+        if (!boundToScore) return;
 
         UpdateCounter();
         UpdateCombo();
@@ -291,6 +303,7 @@ public class ScoreHud : MonoBehaviour
         if (shown == lastShown) return;
 
         lastShown = shown;
+        shownGears = shown;
 
         // SetText with a format argument does not allocate a string, unlike assigning
         // shown.ToString(). This runs on most frames of a crash, so it is worth the overload.
