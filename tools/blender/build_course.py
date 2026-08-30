@@ -119,8 +119,18 @@ def parse_args():
                         "descent -- crests and compressions rather than a constant ramp. Does "
                         "not change the total drop.")
 
+    p.add_argument("--skirt", type=float, default=9.0,
+                   help="Metres BELOW the corridor floor that the outer wall is carried down. "
+                        "The terrain is a surface, not a solid, so without a skirt there is "
+                        "nothing facing you from outside the course and you see straight "
+                        "through it. 0 disables, which looks broken from any exterior view.")
+
     p.add_argument("--bowl-radius", type=float, default=55.0,
                    help="Radius of the half-circle stopping area at the bottom. 0 omits it.")
+    p.add_argument("--start-radius", type=float, default=42.0,
+                   help="Radius of the half-circle starting bay the player spawns in. 0 omits "
+                        "it. Smaller than the finish bowl: you only need room to line up, not "
+                        "room to shed 30 m/s.")
 
     p.add_argument("--obstacles", type=float, default=1.0,
                    help="Obstacle density multiplier. 0 generates a clean course.")
@@ -475,6 +485,55 @@ def build_chunks(args, frames, features=None, step=1.0):
                 on_wall = min(abs(offsets[c]), abs(offsets[c + 1])) >= half + args.shoulder - 1e-6
                 mat_ids.append(1 if on_wall else 0)
 
+        # ---- skirt -------------------------------------------------------------------
+        #
+        # THE TERRAIN IS A SURFACE, NOT A SOLID, AND FROM OUTSIDE IT IS INVISIBLE. Seen from
+        # beyond the wall there is nothing facing you, so the whole course renders as a set of
+        # floating ribbons -- the bench treads -- with sky between them. It is the same defect
+        # that made the ramps see-through, one scale up.
+        #
+        # A skirt closes it: drop a wall from the outermost column straight down past the
+        # corridor floor and the course reads as a cut through solid rock from every angle.
+        # Costs two quads per row per side, about 200 triangles a chunk against 3,400.
+        skirt_base = len(verts)
+        for r in rows:
+            origin, _tangent, right = frames[r]
+            floor = origin.z - args.skirt
+            for c in (0, cols - 1):
+                p = origin + right * offsets[c] + Vector((0.0, 0.0, floor))
+                verts.append((p.x, p.y, p.z))
+                uvs.append((offsets[c] / 8.0, floor / 8.0))
+
+        for ri in range(len(rows) - 1):
+            top_l, top_r = ri * cols, ri * cols + cols - 1
+            nxt_l, nxt_r = (ri + 1) * cols, (ri + 1) * cols + cols - 1
+            bot_l, bot_r = skirt_base + ri * 2, skirt_base + ri * 2 + 1
+            nbot_l, nbot_r = skirt_base + (ri + 1) * 2, skirt_base + (ri + 1) * 2 + 1
+
+            # Winding is opposite on the two sides so both normals face OUTWARD. Get this
+            # backwards and the skirt is invisible from outside, which is the bug it exists
+            # to fix.
+            faces.append((top_l, nxt_l, nbot_l, bot_l))
+            mat_ids.append(1)
+            faces.append((top_r, bot_r, nbot_r, nxt_r))
+            mat_ids.append(1)
+
+        # Cap the very first and very last cross-section, or the course is an open-ended tube.
+        if start_row == 0 or end_row == samples:
+            edge_ri = 0 if start_row == 0 else len(rows) - 1
+            for c in range(cols - 1):
+                a = edge_ri * cols + c
+                b = a + 1
+                lo_a = skirt_base + edge_ri * 2
+                lo_b = skirt_base + edge_ri * 2 + 1
+                # Interpolating the two skirt corners is enough: the cap is a flat end wall and
+                # nobody sees it from a metre away.
+                if start_row == 0:
+                    faces.append((a, lo_a, lo_b, b))
+                else:
+                    faces.append((a, b, lo_b, lo_a))
+                mat_ids.append(1)
+
         name = f"CourseChunk{index:03d}"
         mesh = bpy.data.meshes.new(name)
         mesh.from_pydata(verts, [], faces)
@@ -525,25 +584,35 @@ def course_point(args, frames, i, offset, features=None, step=1.0):
 # ---------------------------------------------------------------------------- bowl
 
 
-def build_bowl(args, frames):
-    """A half-circle stopping bay at the bottom of the descent.
+def build_bowl(args, frames, at_start=False):
+    """A half-circle bay: the stopping area at the bottom, or the spawn bay at the top.
 
     A true half disc rather than a full one: the flat diameter edge is where the corridor
-    arrives, so nothing overlaps the last chunk and there is no coplanar z-fighting at the
+    meets it, so nothing overlaps the end chunk and there is no coplanar z-fighting at the
     join. A rim wall runs round the curved edge and along the parts of the straight edge
-    outside the corridor mouth, so the bay catches a car instead of letting it run out the
+    outside the corridor mouth, so the bay holds a car instead of letting it run out the
     sides.
+
+    The start bay is the same shape with `forward` flipped, so it sits BEHIND the first
+    station and opens down the course. That gives the player somewhere to spawn that is
+    visibly a place rather than an arbitrary point on a slope, and a moment to line up before
+    the descent starts.
     """
-    if args.bowl_radius <= 0.0:
+    radius = args.start_radius if at_start else args.bowl_radius
+    if radius <= 0.0:
         return None, 0
 
-    origin, tangent, right = frames[-1]
+    origin, tangent, right = frames[0] if at_start else frames[-1]
     forward = Vector((tangent.x, tangent.y, 0.0))
     if forward.length < 1e-6:
         forward = Vector((0.0, 1.0, 0.0))
     forward.normalize()
 
-    radius = args.bowl_radius
+    # Flipping forward mirrors the whole bay through its own mouth, which is exactly the
+    # start bay: half a disc pointing back up the hill, opening onto the first chunk.
+    if at_start:
+        forward = -forward
+
     mouth = args.width * 0.5 + args.shoulder
 
     rings = max(4, int(round(radius / args.cell)))
@@ -582,10 +651,57 @@ def build_bowl(args, frames):
             b = a + 1
             c = (ri + 1) * stride + ai
             d = c + 1
-            faces.append((a, b, d, c))
+
+            # Flipping `forward` mirrors the parameterisation, which reverses the handedness
+            # of every quad built from it. Without reversing the winding to match, the whole
+            # start bay renders face-down and is invisible from above -- the same class of
+            # mistake as the inside-out ramps.
+            faces.append((a, c, d, b) if at_start else (a, b, d, c))
             mat_ids.append(1 if (radius * (ri + 1) / rings) > radius * 0.80 else 0)
 
-    mesh = bpy.data.meshes.new("CourseBowl")
+    # ---- skirt ----------------------------------------------------------------------------
+    # Same reason as the chunks: a bare disc has no outside, so from beyond the rim you see
+    # straight through it.
+    floor = origin.z - args.skirt
+    outer_base = len(verts)
+    for ai in range(arcs + 1):
+        t = verts[rings * stride + ai]
+        verts.append((t[0], t[1], floor))
+
+    edge_lo_base = len(verts)
+    for ri in range(rings + 1):
+        t = verts[ri * stride]
+        verts.append((t[0], t[1], floor))
+
+    edge_hi_base = len(verts)
+    for ri in range(rings + 1):
+        t = verts[ri * stride + arcs]
+        verts.append((t[0], t[1], floor))
+
+    for ai in range(arcs):
+        t0, t1 = rings * stride + ai, rings * stride + ai + 1
+        b0, b1 = outer_base + ai, outer_base + ai + 1
+        faces.append((t0, b0, b1, t1) if at_start else (t0, t1, b1, b0))
+        mat_ids.append(1)
+
+    # The straight diameter edge, but only OUTSIDE the corridor mouth -- skirting across the
+    # mouth would wall off the entrance to the bay.
+    for ri in range(rings):
+        if radius * (ri + 1) / rings <= mouth:
+            continue
+
+        lo0, lo1 = ri * stride, (ri + 1) * stride
+        lb0, lb1 = edge_lo_base + ri, edge_lo_base + ri + 1
+        faces.append((lo0, lb0, lb1, lo1) if at_start else (lo0, lo1, lb1, lb0))
+        mat_ids.append(1)
+
+        hi0, hi1 = ri * stride + arcs, (ri + 1) * stride + arcs
+        hb0, hb1 = edge_hi_base + ri, edge_hi_base + ri + 1
+        faces.append((hi0, hi1, hb1, hb0) if at_start else (hi0, hb0, hb1, hi1))
+        mat_ids.append(1)
+
+    name = "CourseStartBay" if at_start else "CourseBowl"
+    mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, [], faces)
     mesh.validate()
     mesh.materials.append(bpy.data.materials[MAT_GROUND])
@@ -601,7 +717,7 @@ def build_bowl(args, frames):
     mesh.polygons.foreach_set("use_smooth", [slot == 0 for slot in mat_ids])
     mesh.update()
 
-    ob = bpy.data.objects.new("CourseBowl", mesh)
+    ob = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(ob)
 
     return ob, sum(len(p.vertices) - 2 for p in mesh.polygons)
@@ -985,7 +1101,8 @@ def steepest_feature_face(args, listing, step):
 
 
 def report(args, frames, chunks, total_tris, step,
-           bowl=None, bowl_tris=0, obstacles=None, obstacle_tris=0, listing=None):
+           bowl=None, bowl_tris=0, obstacles=None, obstacle_tris=0, listing=None,
+           bay=None, bay_tris=0):
     radius = min_turn_radius(frames, step)
     grade = max_grade(frames)
     climb, climb_at = uphill_check(frames)
@@ -994,7 +1111,7 @@ def report(args, frames, chunks, total_tris, step,
     start = frames[0][0]
     end = frames[-1][0]
     per_chunk = total_tris / max(1, len(chunks))
-    everything = total_tris + bowl_tris + obstacle_tris
+    everything = total_tris + bowl_tris + bay_tris + obstacle_tris
 
     print("\n=== COURSE MEASURED ===")
     print(f"  centreline length     {args.length:.0f} m")
@@ -1006,7 +1123,9 @@ def report(args, frames, chunks, total_tris, step,
     print(f"  corridor width        {args.width:.0f} m drivable, {args.shoulder:.0f} m shoulder")
     print(f"  rollers               {args.rollers:.0f} m amplitude")
     print(f"  chunks                {len(chunks)} of {args.chunk:.0f} m")
+    print(f"  start bay             {'radius ' + str(int(args.start_radius)) + ' m, ' + f'{bay_tris:,} tris' if bay else 'none'}")
     print(f"  stopping bowl         {'radius ' + str(int(args.bowl_radius)) + ' m, ' + f'{bowl_tris:,} tris' if bowl else 'none'}")
+    print(f"  outer skirt           {args.skirt:.0f} m below the corridor floor")
     listing = listing or []
     kinds = {}
     for feat in listing:
@@ -1048,7 +1167,14 @@ def report(args, frames, chunks, total_tris, step,
     print(f"  bake_space_transform is on, so every chunk arrives with an identity transform.")
     print(f"  Place the root at world origin.")
     print()
-    print(f"  Spawn the car at   ({start.x:.1f}, {start.z + 1.0:.1f}, {start.y:.1f})   [Unity XYZ]")
+    # Spawn INSIDE the start bay, back from its mouth, rather than on the first metre of the
+    # descent. The bay exists so the run begins somewhere that reads as a place.
+    _o, t0, _r = frames[0]
+    back = Vector((t0.x, t0.y, 0.0))
+    back = back.normalized() if back.length > 1e-6 else Vector((0.0, 1.0, 0.0))
+    spawn = start - back * min(args.start_radius * 0.55, 24.0)
+
+    print(f"  Spawn the car at   ({spawn.x:.1f}, {spawn.z + 1.0:.1f}, {spawn.y:.1f})   [Unity XYZ]")
     print(f"  Facing             (0, 0, 0) -- the course runs along +Z")
     print(f"  Finish is near     ({end.x:.1f}, {end.z + 1.0:.1f}, {end.y:.1f})")
     print()
@@ -1083,11 +1209,12 @@ def main():
 
     chunks, total_tris = build_chunks(args, frames, features, step)
     bowl, bowl_tris = build_bowl(args, frames)
+    bay, bay_tris = build_bowl(args, frames, at_start=True)
     boulders, boulder_tris = build_boulders(args, frames, features, listing, step)
 
     export_fbx(os.path.abspath(args.output))
     report(args, frames, chunks, total_tris, step,
-           bowl, bowl_tris, boulders, boulder_tris, listing)
+           bowl, bowl_tris, boulders, boulder_tris, listing, bay, bay_tris)
 
     if args.preview:
         render_preview(os.path.abspath(args.preview), frames, args)
