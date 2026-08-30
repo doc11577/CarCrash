@@ -117,3 +117,30 @@ Two third-party pieces come with it and carry their own terms:
 
 Build-size note, because `Resources/` folders are force-included: `LiberationSans SDF.asset` is
 **2.2 MB** and ships whether referenced or not. See CLAUDE.md for the trimmed-font-asset fix.
+
+---
+
+## Quarry01 course textures
+
+- **Author:** Rob Tuytel / Poly Haven — https://polyhaven.com
+- **License:** [CC0 1.0 Universal](http://creativecommons.org/publicdomain/zero/1.0/) (public domain)
+- **Attribution required:** No. Poly Haven is entirely CC0; credited here voluntarily.
+- **Location:** `Assets/Art/Tracks/Quarry01/Textures/`
+- **Retrieved:** 2026-08-30, via `https://api.polyhaven.com/files/<asset>`
+
+| File | Poly Haven asset | Used for |
+| --- | --- | --- |
+| `quarry_ground_diff_1k.jpg` | `rock_ground` | `CourseGround` — corridor and bowl floor |
+| `quarry_rock_diff_1k.jpg` | `rock_face_03` | `CourseRock` — walls, benches, boulders |
+
+**Base colour only, at 1K.** The normal, roughness, displacement and ARM maps Poly Haven ships
+alongside these are deliberately NOT downloaded — the same call already made for the E30, where
+24 MB of normal map on a low-poly car read by a chase camera was not defensible. Use material
+constants for smoothness instead.
+
+Two rejected candidates, recorded so they are not tried again:
+
+- `rock_wall_09` — mortared masonry. It is a castle wall, not a quarry face, and its contrast is
+  high enough that tiling would be obvious over a 1,800 m course.
+- `rock_boulder_dry` — tiles beautifully but is washed out and structureless. It reads as a
+  smooth boulder rather than a cut rock face, which is wrong next to flat-shaded terraced walls.
