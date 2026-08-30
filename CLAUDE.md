@@ -1055,6 +1055,18 @@ add. The cost is that art-directing it means editing numbers in the file.
   `WorldToScreenPoint` mirrors points behind the camera — without it, a hit you have driven
   past reappears on the wrong side of the screen.
 
+**TMP essentials cost 2.2 MB of build size, and it is not optional-by-default.** The import
+drops `LiberationSans SDF.asset` into `Assets/TextMesh Pro/Resources/`, and **everything under a
+`Resources/` folder is force-included in a build whether anything references it or not** — so the
+full Latin atlas ships even though this game draws digits, `+`, `x` and a handful of part names.
+Against the 10.4 MB baseline and the 20 MB budget that is affordable but not free.
+
+The fix, when size matters: generate a font asset containing only the glyphs actually used
+(Window → TextMeshPro → Font Asset Creator, custom character set) and delete the stock one. That
+is a ~100 KB atlas instead of 2.2 MB. Not worth doing until the menu and garage have settled what
+text exists. The HDRP shadergraphs in `Assets/TextMesh Pro/Shaders/` do **not** ship — wrong
+folder, and nothing references them. **Re-measure at the next build regardless.**
+
 **`ScoreHud` needs TMP Essential Resources imported.** TMP's *code* ships inside
 `com.unity.ugui` 2.0.0 so everything compiles, but the default font asset lives in
 `Assets/Resources` and is created by **Window → TextMeshPro → Import TMP Essential
