@@ -1138,6 +1138,17 @@ interpolated between the corners; it did not, and the comment is why it survived
 **Only cap an end that has no bay.** A bay's disc already covers that opening and brings its own
 skirt, and capping as well builds a wall straight across the mouth the player must drive through.
 
+**Where two generated meshes meet, matching HEIGHTS is not enough — the VERTICES have to
+coincide.** The bay blends to the corridor's own cross-section at its mouth, evaluating the
+chunk's height function at the same station so the shared edge agrees exactly. That alone still
+leaves cracks unless the two edges are sampled at the same coordinates.
+
+The bay's radius is therefore **snapped to a whole number of `--cell`**. Unsnapped it half-worked,
+which is the worst kind of bug: `42 / 2` gives a radial step of exactly 2 so the start bay lined
+up perfectly, while `55 / 2` rounds to 28 rings and a step of **1.964**, putting every vertex along
+the finish bowl's mouth between two chunk columns — a T-junction and a hairline crack at each one.
+The report prints the snapped radius alongside the requested one so the difference is visible.
+
 ### Scoring — built 2026-08-30
 
 **Gears are the score and the currency at once.** `RunScore` converts damage into gears live;
