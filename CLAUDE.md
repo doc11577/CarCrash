@@ -443,6 +443,24 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 | `Game/PlayerWallet.cs` | Persistent gear balance and best run, in PlayerPrefs. |
 | `Debug/PerfReadout.cs` | On-screen FPS/device readout. **Delete before shipping.** |
 
+### Changing a default in C# does NOT change a component already in the scene
+
+Learned the hard way 2026-08-30 and it will happen again, so it is a standing rule.
+
+Unity **serializes every public field into the scene** the moment a component is added. From then
+on the scene is the source of truth and the C# initializer is only used for *new* instances.
+Fixing `CarInteriorProps.props` in code left `SampleScene` still holding the old boxes, and the
+dash carried on poking through the bonnet with the bug "fixed".
+
+**To adopt new code defaults: select the object, click the ⋮ menu at the top-right of the
+component, choose Reset.** That re-runs the initializers. It resets *every* field on that
+component, so check nothing else on it was hand-tuned first.
+
+This applies to anything with a serialized default worth changing — `CarInteriorProps.props`,
+`CarDamage.parts`, `RunScore`'s conversion rates, `CarController`'s suspension numbers. When a
+fix is a changed default rather than changed logic, **say so explicitly and say Reset**, because
+otherwise the fix looks like it did nothing.
+
 ### Scene setup (SampleScene)
 
 - **Car** — Rigidbody (1200 kg, Interpolate, Continuous), layer `Car`, with `CarInput`,
