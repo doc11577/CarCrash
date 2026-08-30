@@ -1066,8 +1066,30 @@ Decisions worth keeping:
   height put the first bench tread *below* the shoulder top (measured: 3.96 m dropping to
   2.72 m), which is a **ditch down both corridor edges** that would snatch a wheel. The report
   prints the cross-section and flags any non-monotonic step.
+- **THE TERRAIN IS A SURFACE, NOT A SOLID, AND THAT HAS BITTEN TWICE.** A heightfield has a top
+  and no underside, so anywhere you can get outside or beneath it, every polygon is
+  backface-culled and you see straight through. It showed up first as see-through ramp lips, then
+  again from beyond the wall, where the whole map read as floating bench ribbons with sky between
+  them. Two defences, and both are load-bearing:
+
+  - **A skirt** drops from the outermost column to `--skirt` (9 m) below the corridor floor, with
+    caps on the first and last cross-sections and the same treatment round the bowl. ~200 tris a
+    chunk, about 9% on the total, and without it any exterior view looks broken.
+  - **No feature face steeper than ~60°**, so there is nowhere on the drivable surface to tuck
+    under. The build prints the measured worst face and warns past 60.
+
+  It is still open at the very bottom — look from directly beneath and you see in. Nothing in the
+  game ever does.
+
 - **The bowl is a true HALF disc.** Its flat edge meets the corridor end, so nothing overlaps the
-  last chunk into coplanar z-fighting.
+  last chunk into coplanar z-fighting. The **start bay** is the same builder with `forward`
+  flipped, sitting behind the first station and opening down the course, and the player spawns in
+  it rather than on the first metre of the descent.
+
+  **Flipping `forward` mirrors the parameterisation and reverses the handedness of every quad
+  built from it**, so the winding is reversed to match. Without that the entire bay renders
+  face-down and is invisible from above — the inside-out ramp bug a third time. Any future
+  mirrored geometry needs the same care.
 - **Obstacles ARE the terrain, not objects standing on it.** Kickers and humps are folds in the
   height function. This started as separate wedge and box meshes and was wrong twice: they read
   as popcorn scattered on the track, and the hand-written wedge winding was **backwards** — the
