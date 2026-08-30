@@ -29,8 +29,30 @@ public class CarDamage : MonoBehaviour
     [Serializable]
     public class Part
     {
-        [Tooltip("For your own reference in the Inspector.")]
+        [Tooltip("For your own reference in the Inspector. Never shown to the player — set " +
+                 "Display Name for that.")]
         public string name = "part";
+
+        [Tooltip("What the player sees when this part comes off, e.g. \"Wheel Front Right\". " +
+                 "Used EXACTLY as typed, so capitalise it how you want it to read. Leave empty " +
+                 "and the Inspector name is used in capitals instead, which is why an unset " +
+                 "wheel reads WHEELFR.")]
+        public string displayName = "";
+
+        /// <summary>
+        /// The player-facing label. Falls back to the Inspector name in capitals, which is
+        /// legible but ugly for anything with a suffix — `wheelFR` is fine as a field name and
+        /// poor as a caption.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately a plain field rather than something derived from the name by rule.
+        /// Expanding suffixes automatically looks trivial and is not: `bumperR` is REAR while
+        /// `doorR` is RIGHT, and nothing in the string says which. This project has been bitten
+        /// three times by matching on names (`trim` contains `rim`, `steering_centre` filed as a
+        /// wheel, mirrors stealing door hits) and a caption is not worth a fourth.
+        /// </remarks>
+        public string Label =>
+            string.IsNullOrWhiteSpace(displayName) ? name.ToUpperInvariant() : displayName;
 
         [Tooltip("Where on the car this part lives. Leave empty to use the visual's own position.")]
         public Transform anchor;

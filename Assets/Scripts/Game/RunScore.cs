@@ -210,7 +210,7 @@ public class RunScore : MonoBehaviour
         // rather than a point on the car. That is the right place for the popup — it tracks
         // the thing the player is actually watching leave.
         Vector3 at = part.visual != null ? part.visual.position : transform.position;
-        Scored?.Invoke(part.name.ToUpperInvariant() + "  +" + bonus, at);
+        Scored?.Invoke(part.Label + "  +" + bonus, at);
     }
 
     /// <summary>
