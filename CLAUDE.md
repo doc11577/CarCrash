@@ -142,17 +142,18 @@ off — threads need COOP/COEP headers Google Sites will never send), `webGLData
 Untested lever if the Chromebook is slow: capping `devicePixelRatio` to 1. HiDPI Chromebooks
 render far more pixels than the GPU can afford. Measure before reaching for it.
 
-## NEXT SESSION — pick up here (updated 2026-08-30)
+## NEXT SESSION — pick up here (updated 2026-08-30, late)
 
-The E30 is imported, wired and **driving**, and scoring is wired and counting. Everything in the
-old step-by-step wiring block is done and deleted; what follows is only what is still open.
+The E30 drives, scoring counts, Quarry01 is built and textured, the front end exists and three AI
+cars race the hill. Everything in the old step-by-step wiring block is done and deleted; what
+follows is only what is still open.
 
 ### State on disk
 
 **All committed as of 2026-08-30.** `0dba3b5` is the whole E30 import, the Blender pipeline,
 the three damage scripts and the scene wiring; `427dcf4` scoring; `85a946c` the scoring
 readouts; `4b271a1` `PlayerCar`. The E30 FBX meta carries `isReadable: 1`, which deformation
-requires. `SampleScene.unity` holds the E30 wiring plus a small **pre-existing, unrelated**
+requires. `Quarry.unity` holds the E30 wiring plus a small **pre-existing, unrelated**
 loading-bar transform change from an earlier session.
 
 `Assets/Models/` is an empty leftover folder with an orphan `.meta`. Delete it in the Editor.
@@ -195,6 +196,12 @@ events arrive and the gear counter climbs. What is confirmed is exactly that cha
 **the combo multiplier, the floating popups, the part bonus and banking to `PlayerWallet` have
 all still never been observed.** See the unrun list below.
 
+**Quarry01 drives, and the traffic races it (2026-08-30).** The course was imported, textured with
+the CC0 Poly Haven pair, and driven. Three AI cars run it flat out. Confirmed along the way: the
+scoring popups, sustained damage not building combo, the combo multiplier, the SphereCast ground
+filter that stopped wheels climbing ledges, and `CarPaint` tinting only the body once it painted
+per submesh instead of per renderer.
+
 It did not work first time, and the failure mode is worth remembering: `RunScore.playerCar` was
 left empty in the scene, so nothing ever registered, and the HUD rendered a counter that sat at 0
 forever. **A frozen readout looks identical to a broken formula, a broken event and a broken
@@ -203,18 +210,28 @@ Console warning naming the missing component was on screen the whole time.
 
 ### Never run in Unity — still inspection-clean only
 
-- **Everything in scoring except the counter.** The gear count rising is confirmed; these are not:
-  - **The combo multiplier.** `x1.3` and the draining bar should appear on a second hit within
-    `comboWindow` (2.5 s). `multiplierReadout` should read **1** at rest and never 0 — 0 means
-    `RunScore.Update()` is not running at all.
-  - **Sustained contact must NOT build combo.** Scrape a wall: the score should rise while the
-    multiplier stays put. This is the whole reason `CarDamage.Damaged` grew a `sustained` flag,
-    and it is the single most likely thing to be subtly wrong.
-  - **Floating popups.** Depend on `Camera.main` being found and on the `screen.z <= 0` guard.
-  - **The part bonus.** Needs a panel to actually come off, which is itself unrun (below).
-  - **Banking to `PlayerWallet`.** Fires from `RunScore.OnDestroy`. Nothing displays the balance
-    yet, so it can only be checked by reading the Editor's PlayerPrefs at
-    `HKCU\Software\Unity\UnityEditor\DefaultCompany\CarCrash`.
+- **THE WHOLE FRONT END.** `MenuUI`, `UiKit` and `PauseMenu` were written 2026-08-30 and have not
+  been confirmed running. Menus are exactly where "compiles and the logic is straightforward"
+  and "actually works" diverge, and there are two specific ways this fails silently:
+  - **A missing EventSystem, or the wrong input module.** This project uses the Input System
+    package, so it must be `InputSystemUIInputModule` — the legacy `StandaloneInputModule` reads
+    the disabled `Input` class and every button is dead with no error. `UiKit.EnsureEventSystem`
+    creates the right one, but only if nothing else already made a wrong one.
+  - **Scenes missing from the Scene List.** `LoadSceneAsync` returns null for an unlisted scene.
+    `RestartOverlay` now logs an explicit error rather than NullReferencing and leaving
+    `InProgress` stuck true, which would deadlock every later load including R-restart.
+
+  Also unverified: that the pause menu's unscaled-time handling actually works at `timeScale 0`,
+  and that returning to the menu leaves the clock running.
+
+- **Banking to `PlayerWallet`.** Fires from `RunScore.OnDestroy`. The main menu now prints the
+  balance and the best run, so a run followed by a return to the menu is the check — but that
+  path is itself unrun. Failing that, read the Editor's PlayerPrefs at
+  `HKCU\Software\Unity\UnityEditor\DefaultCompany\CarCrash`.
+
+- **The part bonus popup.** Needs a panel to actually come off, which is itself unrun (below).
+  `Part.displayName` was added so the caption reads "Wheel Front Right" rather than `WHEEL-FR`;
+  whether those captions appear at all is untested.
 
 - **Panel detachment against real geometry.** Rammed once, 2026-08-29: the whole shell came off
   at once and was fired sideways. Both causes found and fixed (`maxDamagePerImpact`,
@@ -242,17 +259,19 @@ Console warning naming the missing component was on screen the whole time.
 
 ### Open, in rough priority order
 
-0. **Put the two scoring conversion values back.** `SampleScene` still carries
-   `gearsPerDamage: 1` and `gearsPerPartHealth: 5` from debugging — **50x and 20x the intended
-   `0.02` and `0.25`**. At those numbers one wall hit pays ~700 gears instead of ~14 and a
-   bumper ~800 instead of ~40, so the reference's ~200-gears-per-run scale is meaningless until
-   they go back. Do this before judging any scoring number.
+0. **Play-test the front end, which has never been run.** Open `MainMenu`, press play: PLAY →
+   map → car → GO → the run → TAB → RESUME → TAB → RETURN TO MENU, and check the banked gears
+   on the main screen went up. If buttons do nothing, suspect the EventSystem's input module
+   before anything else; if a load hangs or errors, suspect the Scene List. Both are in
+   *Never run in Unity* above.
 
-   Then finish play-testing the rest of scoring: combo, sustained-does-not-combo, popups,
-   part bonus, banking. See *Never run in Unity* above for what each one should look like.
+   Requires: `MainMenu.unity` with a `MenuUI` object, `PauseMenu` on **GameManager** in
+   `Quarry`, and **both scenes in File > Build Profiles > Scene List**.
 
-   Wiring is done and saved: TMP essentials imported, `RunScore` + `ScoreHud` on **GameManager**,
-   `PlayerCar` on **Car**, `Player Car` correctly left empty.
+0b. **Check the two scoring conversion values.** `Quarry` carried `gearsPerDamage: 1` and
+   `gearsPerPartHealth: 5` from debugging — **50x and 20x the intended `0.02` and `0.25`**.
+   Confirm they were put back before judging any scoring number, and re-tune them now that
+   there is traffic to hit.
 
 1. **Play-test the suspension numbers.** `bumpStopStrength` 60000 and `antiRollStrength` 4000
    are reasoned starting points, never driven. Inside wheels lifting mid-corner → drop
@@ -290,17 +309,29 @@ Build order — expensive unknowns first, content last:
 1. **Done** — deploy pipeline · repo · player settings · size baseline · chase camera ·
    vehicle controller · greybox track · car model · R-to-restart · detachable parts ·
    BMW E30 picked, split, imported and **driving** · suspension made stable
-   (cast overshoot · bump stop · anti-roll bars · roll direction) ·
-   **scoring wired and counting** (gears · combo · HUD · wallet · `PlayerCar` self-registration)
-2. **Now** — **play-test the suspension numbers** · tune damage thresholds ·
-   ram a wall and confirm panels dent, and panels and wheels detach · add in-game CC-BY attribution
-   for the E30 · rebuild and re-measure download size ·
-   **get a real frame-rate number off a school Chromebook**
-3. **Next** — **feature order agreed 2026-08-30: scoring → first real map → menu and garage →
-   traffic.** Scoring counts; combo, popups, part bonus and banking are still unobserved.
-   **The first real map is next.** Traffic is deliberately last, which means the scoring numbers
-   get tuned twice: once now against walls, and again once there are cars to hit, which will be
-   the biggest source of points in the finished game — so do not over-tune them yet.
+   (cast overshoot · bump stop · anti-roll bars · roll direction · ledge-climb filter) ·
+   **scoring wired and counting** (gears · combo · HUD · wallet · `PlayerCar` self-registration) ·
+   **Quarry01 built, textured and driven** (generator · kickers · bays · mountainsides · CC0 textures) ·
+   **traffic AI racing the hill** (descent-seeking · obstacle avoidance · destructible · painted)
+2. **Now** — **play-test the front end** (menu → map → car → GO → TAB → return) ·
+   ram a wall and confirm panels and wheels detach · re-tune damage and scoring now traffic
+   exists · rebuild and re-measure download size ·
+   **get a real frame-rate number off a school Chromebook — this is now overdue.** The scene has
+   gained a 100k-triangle course, three extra rigidbodies with suspension, two 1K textures and a
+   TMP font atlas since the last size baseline, and every performance claim about all of it is
+   reasoning rather than measurement. In-game CC-BY attribution is **done** — it is on the car
+   select screen.
+3. **Next** — the agreed order (scoring → first real map → menu → traffic) is **built end to end
+   as of 2026-08-30**. Scoring counts, Quarry01 drives and is textured, the menu exists, and
+   three AI cars race the hill. What is left on it:
+   - **Play-test the front end.** Menu, map select, car select, GO, TAB pause, return to menu.
+     None of it has been run.
+   - **The garage.** Deferred from "menu and garage" — car select exists but nothing is bought,
+     and `PlayerWallet.Spend` has no caller.
+   - **Re-tune the scoring numbers now that traffic exists**, and decide whether hitting traffic
+     should pay (`TrafficSpawner.scoreTrafficDamage`, currently off).
+   - **Rebuild and re-measure the download**, which has not been done since TMP essentials,
+     two 1K textures and a 100k-triangle course were added.
 4. **Later** — split-screen 2P · juice · audio · more content · ship pass
 
 ### Architecture calls already made
@@ -375,7 +406,7 @@ Build order — expensive unknowns first, content last:
   at `topSpeed` it adds `0.9 x 1200 x 9.81 = 10,595 N`, taking each corner to
   `(11,772 + 10,595) / 4 = 5,592 N` and compression to `0.62`. Cornering load transfer then
   goes on top. **If it still sits low at speed, `downforce` is the first number to cut, not
-  `springStrength`** — it is serialized in `SampleScene` at 0.9, try **0.35** (sag falls to
+  `springStrength`** — it is serialized in `Quarry` at 0.9, try **0.35** (sag falls to
   ~3.2 cm) and it does not disturb rest ride height at all.
 - **Wheel mesh orientation is a per-model Inspector value, `CarController.wheelVisualEuler`.**
   `UpdateVisual` sets `visual.rotation` **absolutely**, so it must know which mesh axis is
@@ -457,7 +488,7 @@ Learned the hard way 2026-08-30 and it will happen again, so it is a standing ru
 
 Unity **serializes every public field into the scene** the moment a component is added. From then
 on the scene is the source of truth and the C# initializer is only used for *new* instances.
-Fixing `CarInteriorProps.props` in code left `SampleScene` still holding the old boxes, and the
+Fixing `CarInteriorProps.props` in code left `Quarry` still holding the old boxes, and the
 dash carried on poking through the bonnet with the bug "fixed".
 
 **To adopt new code defaults: select the object, click the ⋮ menu at the top-right of the
@@ -469,7 +500,7 @@ This applies to anything with a serialized default worth changing — `CarInteri
 fix is a changed default rather than changed logic, **say so explicitly and say Reset**, because
 otherwise the fix looks like it did nothing.
 
-### Scene setup (SampleScene)
+### Scene setup (Quarry)
 
 - **Car** — Rigidbody (1200 kg, Interpolate, Continuous), layer `Car`, with `CarInput`,
   `CarController`, `CarDamage`, `PlayerCar`. The FBX is a child at origin, **Scale Factor 1.0**.
@@ -508,8 +539,29 @@ That is the intended behaviour. The cost is that a low wall lets the nose clip i
 0.94 m before contact. Lower the Nose Center Y toward `0.85` if that reads badly.
 - **Part anchors** `PartHood`, `PartBumperF/R`, `PartDoorL/R`. Wheel anchors double as
   the wheel part anchors.
-- **GameManager** — `RunRestart`, `DebrisPool`, `RunScore` (Player Car empty — the car finds it), `ScoreHud`.
+- **GameManager** — `RunRestart`, `DebrisPool`, `RunScore` (Player Car empty — the car finds it),
+  `ScoreHud`, `PauseMenu`, `TrafficSpawner` (+ a child `TrafficGrid` empty marking the grid).
 - **Main Camera** — `ChaseCamera` (target = Car), `PerfReadout`.
+- **TrafficCar prefab** (`Assets/Art/Vehicles/`) — a copy of `Car` with **`PlayerCar` and
+  `CarInput` removed** and `TrafficDriver` + `CarPaint` added. Not in the scene; `TrafficSpawner`
+  instantiates it. See the traffic section for why `PlayerCar` must be absent rather than stripped.
+
+### Scene setup (MainMenu)
+
+- **Main Camera** — the default one. A Screen Space Overlay canvas draws without a camera, but
+  Unity complains and the Game view goes black otherwise.
+- **Menu** — an empty GameObject with `MenuUI`. It builds its own canvas, pages and EventSystem.
+
+**Both scenes must be in File > Build Profiles > Scene List.** `LoadSceneAsync` returns null for
+an unlisted scene, which is the single most likely reason the front end does nothing.
+
+**The Scene List currently has `Quarry` at index 0 and `MainMenu` at 1, so a BUILD starts in the
+game and never shows the menu.** That is convenient while developing — hitting play drops you
+straight into the car — but **`MainMenu` must be moved to index 0 before shipping**, or the
+front end ships unreachable. Nothing in the Editor will warn about this.
+
+The scene was renamed `SampleScene` → `Quarry` on 2026-08-30. `MenuUI`'s map list and its code
+default both say `Quarry`; anything still referring to `SampleScene` is stale.
 
 Layer discipline, because every mask bug in this project looks like a physics bug:
 the car is on `Car`; `ChaseCamera` ground/collision masks, `CarController` ground mask
@@ -1009,7 +1061,7 @@ several collisions in a single step and each is a buffer upload.
    loop are load-bearing: `IgnoreCollision` errors on a collider whose GameObject is inactive,
    and `DebrisPool` deactivates spent debris.
 
-**`Part.anchor` is set on 9 of the 11 parts in `SampleScene`, and it should not be.** Those are
+**`Part.anchor` is set on 9 of the 11 parts in `Quarry`, and it should not be.** Those are
 the leftover Kenney-era empties under `Car`, and they are in the wrong place for the E30:
 `PartDoorL` sits at `x -1.2` when the body half-width is ~0.84 — **0.36 m outside the car** —
 and `PartBumperF` at `z 2.0` when the nose face is at `z ~1.67`. A set anchor **overrides**
@@ -1216,7 +1268,32 @@ Other decisions:
   and with it on a traffic car wrecking itself on a wall pays the player for doing nothing.
   `TrafficSpawner.scoreTrafficDamage` turns it on when that is decided.
 
-Cost: 7 probes at 10 Hz is ~1.6 raycasts per physics step per car, against the 4 sphere casts the
+#### Making them fast — lookahead is TIME, not distance
+
+Tuned and **confirmed in play 2026-08-30**: they book it down the hill.
+
+The first version was slow, and throttle was never the reason — `cruiseThrottle` was already 1.0.
+**A fixed lookahead is a fixed distance but a shrinking amount of time.** 26 m at 30 m/s is
+**0.87 s of warning**, which is not enough to turn a 1200 kg car, so driving slowly was the only
+safe behaviour available to it. The AI was not being timid; it could not see far enough to be fast.
+
+`lookAheadPerSpeed` (0.9 m per m/s) makes the reach grow with speed, so the car always has roughly
+the same *time* to react — about 1.6 s at pace — and can carry full throttle into a corner it can
+already see. **This is the fix to reach for whenever an AI seems too cautious**; raising throttle
+or lowering caution without it just moves the crash earlier.
+
+`straightBias` scales with the live reach for the same reason: a longer probe finds bigger drops,
+so a fixed per-degree penalty gets swamped and the car weaves exactly when it can least afford to.
+
+Supporting values: `cornerLift` 0.28, `steerRate` 6.5, decisions 14 Hz.
+
+**`speedBoost` (1.15) multiplies the INSTANCE's `topSpeed` and `enginePower`**, so traffic is
+quicker than the player without touching the shared vehicle tuning. Power is scaled with top speed
+or the car merely takes longer to reach a higher ceiling and is no faster where it matters.
+**Do not push far past 1.2** — traffic that outruns the player vanishes down the hill in the first
+ten seconds and leaves nothing to crash into, which for a crash game is worse than slightly slow.
+
+Cost: 7 probes at 14 Hz is ~2 raycasts per physics step per car, against the 4 sphere casts the
 car itself already does. **The AI is the cheap half** — the rigidbodies and their suspension are
 the real expense.
 

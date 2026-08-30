@@ -11,9 +11,9 @@ using UnityEngine;
 /// would put a loading bar between every click.
 /// </summary>
 /// <remarks>
-/// Lives in its own scene, so the 71k-triangle course and the car are NOT in memory while the
-/// player is sitting in a menu. On a 512 MB WASM heap that matters more than the convenience of
-/// keeping everything in one scene.
+/// Lives in its own scene, so the 100k-triangle course, the player car and the traffic are NOT in
+/// memory while the player sits in a menu. On a 512 MB WASM heap that matters more than the
+/// convenience of keeping everything in one scene.
 ///
 /// Maps and cars are Inspector lists rather than hard-coded, so adding one is data. Selection is
 /// stored by string ID through <see cref="GameSelection"/>, never by list index.
@@ -29,7 +29,7 @@ public class MenuUI : MonoBehaviour
 
         [Tooltip("Scene to load. Must be in File > Build Profiles > Scene List or the button " +
                  "does nothing and logs an error.")]
-        public string sceneName = "SampleScene";
+        public string sceneName = "Quarry";
 
         [Tooltip("One line under the name. Facts, not adjectives.")]
         public string blurb = "1,800 m  ·  270 m drop  ·  about 90 seconds";
