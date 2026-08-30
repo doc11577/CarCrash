@@ -217,9 +217,9 @@ after the last play test.
 
 ### Open, in rough priority order
 
-0. **Import TMP Essential Resources, then wire and play-test scoring.**
-   Window → TextMeshPro → Import TMP Essential Resources (once), then add `RunScore` and
-   `ScoreHud` to **GameManager** and drag `Car` into `RunScore.Player Car`. Nothing in the
+0. **Import TMP Essential Resources, add PlayerCar, then play-test scoring.**
+   Window → TextMeshPro → Import TMP Essential Resources (once), add `RunScore` and
+   `ScoreHud` to **GameManager**, and add `PlayerCar` to **Car**. Leave `Player Car` empty. Nothing in the
    scoring commit has ever run.
 
 1. **Play-test the suspension numbers.** `bumpStopStrength` 60000 and `antiRollStrength` 4000
@@ -379,6 +379,7 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 | --- | --- |
 | `Camera/ChaseCamera.cs` | Automatic chase cam. No player input, ever. |
 | `Vehicle/CarInput.cs` | Keys → throttle / steer / handbrake. Has a `Scheme` for split-screen. |
+| `Vehicle/PlayerCar.cs` | Marks the player's car and announces it. `PlayerCar.Current` is how anything finds it. |
 | `Vehicle/CarController.cs` | SphereCast suspension with bump stops and anti-roll bars, drive, grip, steering, air control. |
 | `Damage/CarDamage.cs` | Impacts → part damage → detachment. Fires `Damaged` and `PartLost`. |
 | `Damage/CarDeformation.cs` | Per-vertex denting on impact. Player car only. |
@@ -394,7 +395,7 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 ### Scene setup (SampleScene)
 
 - **Car** — Rigidbody (1200 kg, Interpolate, Continuous), layer `Car`, with `CarInput`,
-  `CarController`, `CarDamage`. The `coupe-split` FBX is a child at origin, **Scale Factor 1.0**.
+  `CarController`, `CarDamage`, `PlayerCar`. The FBX is a child at origin, **Scale Factor 1.0**.
 - **Wheel anchors** `WheelFL/FR/RL/RR` at local `(±0.877, 0.61, +1.776 / -1.345)`, with
   `wheelRadius = 0.41`. The `0.61` is derived, not guessed: `wheelRadius + ⅔ × suspensionTravel`
   puts the suspension at ⅓ compression when parked. `springStrength` 9000 is unchanged —
@@ -430,7 +431,7 @@ That is the intended behaviour. The cost is that a low wall lets the nose clip i
 0.94 m before contact. Lower the Nose Center Y toward `0.85` if that reads badly.
 - **Part anchors** `PartHood`, `PartBumperF/R`, `PartDoorL/R`. Wheel anchors double as
   the wheel part anchors.
-- **GameManager** — `RunRestart`, `DebrisPool`, `RunScore` (Player Car = `Car`), `ScoreHud`.
+- **GameManager** — `RunRestart`, `DebrisPool`, `RunScore` (Player Car empty — the car finds it), `ScoreHud`.
 - **Main Camera** — `ChaseCamera` (target = Car), `PerfReadout`.
 
 Layer discipline, because every mask bug in this project looks like a physics bug:
@@ -966,9 +967,32 @@ Decisions that are load-bearing:
 - **`RunScore.Bank()` runs from `OnDestroy`, not from `RunRestart`.** Every exit path — restart,
   quit, returning to a menu — unloads the scene, so banking there catches all of them. Guarded
   so it cannot double-pay.
-- **Traffic will register itself.** `Register()` / `Unregister()` are public for the spawner to
-  call. Do not add traffic cars to an Inspector list, and do not auto-find `CarDamage` — once
-  traffic exists, a find would pick an arbitrary car.
+- **Nothing searches for the player car. The car announces itself.** `PlayerCar` is a marker
+  component that registers with `RunScore` in `OnEnable` and withdraws in `OnDisable`, and
+  publishes `PlayerCar.Current`. Decided 2026-08-30 after `RunScore.playerCar` was left empty in
+  the scene and scoring silently did nothing all session.
+
+  Both obvious alternatives are wrong. A **scene reference** cannot point at a car the garage
+  spawns mid-session, which is the whole point of having a garage. A **blind
+  `FindFirstObjectByType<CarDamage>()`** returns an arbitrary car the moment traffic exists, so
+  scoring would attach to a random NPC and look like a tuning problem. Matching on the `Player`
+  tag or on "whichever car has a `CarInput`" is implicit matching — the pattern that has already
+  cost this project three bugs (`trim` contains `rim`, `steering_centre` classified as a wheel,
+  mirrors stealing door hits). A component that means exactly one thing cannot be matched by
+  accident.
+
+  **Ordering is handled from both directions**, because component init order across GameObjects
+  is undefined: `PlayerCar.OnEnable` registers if `RunScore.Instance` already exists, and
+  `RunScore.Start` reads `PlayerCar.Current` if it does not. `Register()` is idempotent, so both
+  firing is harmless. `OnDisable` only clears `Current` if it is still the car on duty, or a swap
+  that enables the new car before disabling the old would clear the incoming one.
+
+  **Traffic registers the same way.** `Register()` / `Unregister()` are public for the spawner.
+  Do not add traffic cars to an Inspector list.
+
+  `PlayerCar.Current` is also the right hook for the garage, and for `ChaseCamera.target` and
+  `PerfReadout.car`, both of which are still hard scene references and will break the same way
+  the moment a car is spawned rather than placed.
 
 #### The HUD is built in code, and that is deliberate
 
