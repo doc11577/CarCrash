@@ -56,20 +56,40 @@ public class RestartOverlay : MonoBehaviour
     public static bool InProgress { get; private set; }
 
     int sceneIndex;
+    string sceneName;
     float minimumDisplayTime;
     float progress;
     Texture2D pixel;
 
     public static void Begin(int sceneIndex, float minimumDisplayTime)
     {
+        Begin(sceneIndex, null, minimumDisplayTime);
+    }
+
+    /// <summary>
+    /// Load a scene BY NAME behind the same bar. The menu needs this: it knows which map the
+    /// player picked as a name, and a build index would have to be kept in step with the Scene
+    /// List by hand, which is exactly the kind of number that goes stale silently.
+    /// </summary>
+    public static void Begin(string sceneName, float minimumDisplayTime)
+    {
+        Begin(-1, sceneName, minimumDisplayTime);
+    }
+
+    static void Begin(int sceneIndex, string sceneName, float minimumDisplayTime)
+    {
         if (InProgress) return;
         InProgress = true;
+
+        // A load started from a paused game would otherwise arrive in a frozen scene.
+        Time.timeScale = 1f;
 
         GameObject host = new GameObject("RestartOverlay");
         DontDestroyOnLoad(host);
 
         RestartOverlay overlay = host.AddComponent<RestartOverlay>();
         overlay.sceneIndex = sceneIndex;
+        overlay.sceneName = sceneName;
         overlay.minimumDisplayTime = minimumDisplayTime;
         overlay.StartCoroutine(overlay.Run());
     }
@@ -81,7 +101,22 @@ public class RestartOverlay : MonoBehaviour
 
         float startedAt = Time.unscaledTime;
 
-        AsyncOperation load = SceneManager.LoadSceneAsync(sceneIndex);
+        AsyncOperation load = string.IsNullOrEmpty(sceneName)
+            ? SceneManager.LoadSceneAsync(sceneIndex)
+            : SceneManager.LoadSceneAsync(sceneName);
+
+        if (load == null)
+        {
+            // LoadSceneAsync returns null for a scene that is not in the Scene List, and
+            // without this the coroutine would NullReference and leave InProgress stuck true,
+            // which deadlocks every future load including restarts.
+            Debug.LogError($"RestartOverlay: scene '{sceneName ?? sceneIndex.ToString()}' is not " +
+                           "in File > Build Profiles > Scene List, so it cannot be loaded.");
+            InProgress = false;
+            Destroy(gameObject);
+            yield break;
+        }
+
         load.allowSceneActivation = false;
 
         // Unity reports 0.9 when a scene is loaded and waiting for activation.
