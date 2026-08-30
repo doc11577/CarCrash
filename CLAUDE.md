@@ -441,6 +441,14 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 | `Game/RunScore.cs` | Damage and lost parts → gears. Combo multiplier. Banks the run on scene unload. |
 | `Game/ScoreHud.cs` | Gear counter, combo bar and floating popups. Builds its own canvases in code. |
 | `Game/PlayerWallet.cs` | Persistent gear balance and best run, in PlayerPrefs. |
+| `AI/TrafficDriver.cs` | Traffic AI. Steers at the biggest ground drop ahead. See the known limitation. |
+| `AI/TrafficSpawner.cs` | Spawns the traffic grid, paints it, optionally registers it for scoring. |
+| `Vehicle/ICarDriver.cs` | Throttle / steer / handbrake. Implemented by `CarInput` and `TrafficDriver`. |
+| `Vehicle/CarPaint.cs` | Tints the body submesh via a MaterialPropertyBlock. |
+| `Menu/MenuUI.cs` | Main menu, map select, car select. Carries the E30 CC-BY credit. |
+| `Menu/UiKit.cs` | Canvas, button and label builders shared by the menu and the pause screen. |
+| `Game/PauseMenu.cs` | TAB pauses. Resume and return to menu. |
+| `Game/GameSelection.cs` | Chosen map and car, by string id, in PlayerPrefs. |
 | `Debug/PerfReadout.cs` | On-screen FPS/device readout. **Delete before shipping.** |
 
 ### Changing a default in C# does NOT change a component already in the scene
@@ -1168,6 +1176,65 @@ which is the worst kind of bug: `42 / 2` gives a radial step of exactly 2 so the
 up perfectly, while `55 / 2` rounds to 28 rings and a step of **1.964**, putting every vertex along
 the finish bowl's mouth between two chunk columns — a T-junction and a hairline crack at each one.
 The report prints the snapped radius alongside the requested one so the difference is visible.
+
+### Traffic AI — built 2026-08-30
+
+Three cars racing the player to the bottom. Real physics, real `CarDamage`, tinted paint.
+
+**Steering is one rule: go where the ground drops most.** A fan of seven probes casts DOWNWARD
+ahead of the car and it steers at whichever finds the biggest drop. That single test covers the
+whole map — the valley floor descends so following the drop follows the course, a wall goes up so
+it is avoided for free, and kickers, humps and boulders also go up so obstacle avoidance falls out
+of the same test rather than a second system that has to agree with the first.
+
+Probes cast **down, not forward**, because a forward ray only reports *that* something is in the
+way while a downward one reports *how high it is*, which is the number the rule is built on.
+
+**⚠ KNOWN LIMITATION, flagged by Ethan 2026-08-30 and deliberately kept for now: descent-seeking
+will not generalise.** It works because Quarry01 is a valley whose floor is the fastest way down.
+It will fail on a course with a flat section, a climb, a fork where the shallower branch is the
+correct line, or any map where "downhill" and "forward" come apart. When that happens the
+replacement is a **coarse spline or waypoint chain for direction, keeping the probe fan for local
+avoidance** — the fan is the half that is genuinely reusable. Do not spend effort making
+descent-seeking cleverer; replace the direction source and keep the avoidance.
+
+Other decisions:
+
+- **`CarController` drives through `ICarDriver`, not `CarInput`.** The AI uses exactly the same
+  physics as the player. Traffic that moves by its own rules always ends up feeling like it is on
+  rails next to a car that does not, and every handling fix would have to be made twice.
+- **`TrafficDriver.Awake` disables any `CarInput` it finds.** A traffic car built from the
+  player's prefab would otherwise read the same keyboard and mirror the player's steering.
+- **The traffic prefab must NOT have `PlayerCar`.** It claims `PlayerCar.Current` in `OnEnable`,
+  so a traffic car would become "the player's car" on spawn. Stripping it at runtime is worse —
+  destroying it fires `OnDisable`, which clears `Current` and unregisters the real player too.
+  `TrafficSpawner` checks and refuses with an explicit error.
+- **These are NOT the "kinematic until struck" traffic** in *Architecture calls*. That scheme is
+  sized for ~20 background cars; these three race over the same kickers as the player and need
+  real physics. Both schemes should coexist once the roster grows.
+- **Traffic damage does not score by default.** The design says the score is damage to YOUR car,
+  and with it on a traffic car wrecking itself on a wall pays the player for doing nothing.
+  `TrafficSpawner.scoreTrafficDamage` turns it on when that is decided.
+
+Cost: 7 probes at 10 Hz is ~1.6 raycasts per physics step per car, against the 4 sphere casts the
+car itself already does. **The AI is the cheap half** — the rigidbodies and their suspension are
+the real expense.
+
+#### `CarPaint` — tint per SUBMESH, never per renderer
+
+`renderer.SetPropertyBlock(block)` applies to **every submesh that renderer draws**, and the E30's
+body mesh carries `[Body, Glass]` in one renderer. Matching on the Body material therefore found
+the right renderer and tinted the windows to match it, which is what made the cars read as moulded
+toys. Use the **per-material-index overload**, and record which index matched.
+
+A MaterialPropertyBlock rather than `renderer.material`, which would instantiate a copy of the
+material per car per panel and turn one shared body material into thirty. MPBs do break SRP
+batching; with four cars that is not worth caring about, and it would be if traffic reached twenty.
+
+**The palette is deliberately muted.** These colours multiply a near-white body texture, so a
+saturated primary comes out as flat poster colour. Real car paint is darker and greyer than people
+expect. Detached panels keep their tint, because the block lives on the renderer and unparenting
+does not disturb it — a red car sheds red doors.
 
 ### Scoring — built 2026-08-30
 
