@@ -103,6 +103,21 @@ def parse_args():
                    help="Quarry benches cut into each wall. 0 gives a smooth slope, which "
                         "reads as a sand dune rather than excavated rock.")
 
+    p.add_argument("--mountain", type=float, default=95.0,
+                   help="Metres the mountainside rises ABOVE the quarry benches, at the crest. "
+                        "This is what makes it a valley between two mountains rather than a "
+                        "trench with 22 m sides, and what stops a launched car getting out. "
+                        "0 leaves the benched wall as the full height.")
+    p.add_argument("--mountain-run", type=float, default=120.0,
+                   help="Horizontal metres the mountainside occupies. With --mountain 95 this "
+                        "is about 38 degrees, which is a steep but natural slope. Shorten it "
+                        "for a gorge, lengthen it for foothills.")
+    p.add_argument("--mountain-cell", type=float, default=16.0,
+                   help="Grid spacing on the mountainside. Deliberately far coarser than "
+                        "--cell: nothing drives on it and it is mostly seen at distance, so "
+                        "sampling it at corridor resolution would more than double the whole "
+                        "course for detail nobody can resolve.")
+
     p.add_argument("--chunk", type=float, default=DEFAULT_CHUNK,
                    help="Chunk length in metres. Drives frustum culling. See module docstring.")
     p.add_argument("--cell", type=float, default=DEFAULT_CELL,
@@ -334,6 +349,39 @@ def wall_lift(args, d, half, edge):
     return base + above
 
 
+def mountain_lift(args, frames, i, offset):
+    """How far the mountainside rises above the quarry face at one point.
+
+    Kept separate from wall_lift because the crest WANDERS along the course. A constant height
+    reads as an embankment however tall it is -- what makes a skyline look like mountains is
+    that it is uneven, and the two sides disagreeing with each other.
+
+    The two flanks are given different noise phases for exactly that reason: sampled from the
+    same function they rise and fall together, which reads as a channel rather than as two
+    separate landforms.
+    """
+    if args.mountain <= 0.0 or args.mountain_run <= 0.0:
+        return 0.0
+
+    d = abs(offset)
+    foot = args.width * 0.5 + args.shoulder + args.wall_run
+    if d <= foot:
+        return 0.0
+
+    t = min(1.0, (d - foot) / args.mountain_run)
+    along = i * (args.length / max(1, len(frames) - 1))
+
+    # Phase the left flank away from the right so the two ridgelines are independent.
+    phase = 0.0 if offset < 0.0 else 613.0
+    crest = 0.70 + 0.60 * fbm((along + phase) * 0.0045, args.seed + 991)
+
+    # Ease out of the bench top so the join is a slope change, not a crease.
+    profile = smoothstep(0.0, 1.0, t)
+    relief = (noise2(along * 0.02, offset * 0.02, args.seed + 7717) - 0.5) * args.mountain * 0.14
+
+    return args.mountain * crest * profile + relief * t
+
+
 def cross_section(args):
     """Offsets across the corridor, and the height each is raised by.
 
@@ -363,6 +411,18 @@ def cross_section(args):
     right = [edge + wall_cell * (i + 1) for i in range(steps)]
 
     offsets = sorted(left) + offsets + right
+
+    # The mountainside, sampled far coarser than the corridor. Its columns sit outside the
+    # quarry face, which wall_lift has already capped at --wall, and the extra height is added
+    # per station by mountain_lift so the crest can wander along the course.
+    if args.mountain > 0.0 and args.mountain_run > 0.0:
+        foot = edge + args.wall_run
+        rungs = max(1, int(math.ceil(args.mountain_run / args.mountain_cell)))
+        step_m = args.mountain_run / rungs
+        out_left = [-foot - step_m * (i + 1) for i in range(rungs)]
+        out_right = [foot + step_m * (i + 1) for i in range(rungs)]
+        offsets = sorted(out_left) + offsets + out_right
+
     lifts = [wall_lift(args, abs(x), half, edge) for x in offsets]
 
     return offsets, lifts
@@ -431,7 +491,7 @@ def surface_height(args, frames, i, offset, lift, features=None, step=1.0):
             feature = max(feature, feature_lift(feat, (i - feat["i"]) * step,
                                                 offset - feat["offset"]))
 
-    return lift + bumps + wall_relief + feature * on_corridor
+    return lift + bumps + wall_relief + feature * on_corridor + mountain_lift(args, frames, i, offset)
 
 
 def build_chunks(args, frames, features=None, step=1.0):
@@ -1190,6 +1250,19 @@ def report(args, frames, chunks, total_tris, step,
           f"   {'(fine)' if climb < 0.08 else '(<-- may stall a slow car)'}")
     print(f"  tightest turn radius  {radius:.0f} m   (under ~40 m is undrivable at speed)")
     print(f"  corridor width        {args.width:.0f} m drivable, {args.shoulder:.0f} m shoulder")
+
+    foot = args.width * 0.5 + args.shoulder + args.wall_run
+    if args.mountain > 0.0:
+        crest_lo = args.wall + args.mountain * 0.70
+        crest_hi = args.wall + args.mountain * 1.30
+        slope = math.degrees(math.atan(args.mountain / max(args.mountain_run, 1e-6)))
+        print(f"  wall then mountain    {args.wall:.0f} m benched face, then {args.mountain:.0f} m "
+              f"of mountainside over {args.mountain_run:.0f} m ({slope:.0f} deg)")
+        print(f"  ridge height          {crest_lo:.0f}-{crest_hi:.0f} m above the corridor, "
+              f"varying along the course")
+        print(f"  total width           {2 * (foot + args.mountain_run):.0f} m")
+    else:
+        print(f"  wall                  {args.wall:.0f} m benched face, no mountainside")
     print(f"  rollers               {args.rollers:.0f} m amplitude")
     print(f"  chunks                {len(chunks)} of {args.chunk:.0f} m")
     def snapped(r):
