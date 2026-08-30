@@ -519,19 +519,37 @@ def build_chunks(args, frames, features=None, step=1.0):
             mat_ids.append(1)
 
         # Cap the very first and very last cross-section, or the course is an open-ended tube.
-        if start_row == 0 or end_row == samples:
-            edge_ri = 0 if start_row == 0 else len(rows) - 1
+        #
+        # ONLY where there is no bay. A bay's disc already covers that opening and brings its
+        # own skirt, and capping it as well builds a wall straight across the mouth the player
+        # has to drive through.
+        #
+        # The cap needs its OWN bottom vertex per column. An earlier version reused the two
+        # outer skirt corners for every quad in the row, so each 2 m segment of the profile
+        # was stretched down to the same pair of points 68 m apart -- a fan of overlapping
+        # slabs that read as a giant wall beside the start bay.
+        caps = []
+        if start_row == 0 and args.start_radius <= 0.0:
+            caps.append((0, True))
+        if end_row == samples and args.bowl_radius <= 0.0:
+            caps.append((len(rows) - 1, False))
+
+        for edge_ri, is_start in caps:
+            origin, _tangent, right = frames[rows[edge_ri]]
+            floor = origin.z - args.skirt
+
+            cap_base = len(verts)
+            for offset in offsets:
+                p = origin + right * offset + Vector((0.0, 0.0, floor))
+                verts.append((p.x, p.y, p.z))
+                uvs.append((offset / 8.0, floor / 8.0))
+
             for c in range(cols - 1):
                 a = edge_ri * cols + c
                 b = a + 1
-                lo_a = skirt_base + edge_ri * 2
-                lo_b = skirt_base + edge_ri * 2 + 1
-                # Interpolating the two skirt corners is enough: the cap is a flat end wall and
-                # nobody sees it from a metre away.
-                if start_row == 0:
-                    faces.append((a, lo_a, lo_b, b))
-                else:
-                    faces.append((a, b, lo_b, lo_a))
+                lo_a = cap_base + c
+                lo_b = cap_base + c + 1
+                faces.append((a, lo_a, lo_b, b) if is_start else (a, b, lo_b, lo_a))
                 mat_ids.append(1)
 
         name = f"CourseChunk{index:03d}"
@@ -634,8 +652,16 @@ def build_bowl(args, frames, at_start=False):
 
             # Wall the straight edge too, except across the corridor mouth, or the bay simply
             # spills back out either side of where you came in.
-            if ahead < args.cell * 1.5 and abs(across) > mouth:
-                lift = max(lift, args.wall * smoothstep(mouth, mouth + 10.0, abs(across)))
+            #
+            # This TAPERS into the bay rather than stopping after one cell. Gated on
+            # `ahead < cell * 1.5` it was a wall three metres deep standing in open ground --
+            # two thin fins either side of the entrance, which is what it looked like. Decaying
+            # it over most of the radius makes the corridor walls open out into the bay the way
+            # a quarry actually does.
+            if abs(across) > mouth:
+                flank = (smoothstep(mouth, mouth + 10.0, abs(across))
+                         * (1.0 - smoothstep(0.0, radius * 0.55, max(0.0, ahead))))
+                lift = max(lift, args.wall * flank)
 
             relief = (noise2(ahead * 0.05, across * 0.05, args.seed + 6101) - 0.5)
             lift += relief * (args.wall * 0.10 if lift > 0.1 else 0.0)
@@ -1037,6 +1063,16 @@ def render_preview(path, frames, args):
     # seen edge-on and all it shows is their top edge receding -- which reads as rolling hills
     # whatever their actual profile is. This one looks side-on at one wall from above the
     # opposite one, which is the only view that shows whether the benches exist.
+    # The start bay, from above and behind it looking down the course. Added after a broken end
+    # cap shipped twice without being seen -- neither the overview nor the mid-course cameras
+    # look anywhere near either bay, so nothing caught it.
+    start = frames[0][0]
+    _, t0, _ = frames[0]
+    fwd0 = Vector((t0.x, t0.y, 0.0)).normalized()
+    shoot(start - fwd0 * (args.start_radius + 105.0) + Vector((0.0, 0.0, args.wall * 3.4)),
+          frames[min(len(frames) - 1, 40)][0],
+          root + "_start" + ext, lens=26.0)
+
     _, _, right = frames[len(frames) // 2]
     reach = args.width * 0.5 + args.shoulder + args.wall_run
     shoot(mid + right * -(reach + 95.0) + Vector((0.0, 0.0, args.wall * 2.6)),
