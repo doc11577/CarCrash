@@ -20,8 +20,8 @@ using UnityEngine;
 /// instead of driving into scenery with confidence.
 ///
 /// COST, because three of these run alongside the player. Probes are a raycast each, taken at
-/// `decisionsPerSecond` rather than every physics step: 7 probes plus one clearance cast at
-/// 10 Hz is 80 casts a second per car, about 1.6 per physics step. The car itself is a normal
+/// `decisionsPerSecond` rather than every physics step: 7 probes at 14 Hz is about 100 casts a
+/// second per car, roughly 2 per physics step. The car itself is a normal
 /// CarController, which is 4 sphere casts a step — the AI is the cheap half by a wide margin.
 ///
 /// Traffic here is NOT the "kinematic until struck" scheme in the architecture notes. That was
@@ -37,9 +37,16 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     static readonly List<TrafficDriver> Live = new List<TrafficDriver>();
 
     [Header("Looking ahead")]
-    [Tooltip("How far ahead the probes sample, in metres. Too short and it cannot see a wall " +
-             "in time; too long and it ignores what is directly in front of it.")]
-    public float lookAhead = 26f;
+    [Tooltip("How far ahead the probes sample when stopped, in metres. Too short and it cannot " +
+             "see a wall in time; too long and it ignores what is directly in front of it.")]
+    public float lookAhead = 22f;
+
+    [Tooltip("EXTRA metres of lookahead per m/s of speed. This is what lets them commit.\n\n" +
+             "A fixed lookahead is a fixed DISTANCE but a shrinking amount of TIME: 26 m at " +
+             "30 m/s is 0.87 s of warning, which is not enough to turn a 1200 kg car, so the " +
+             "only safe answer was to go slowly. At 0.9 the same car looks 1.6 s ahead and can " +
+             "carry full throttle.")]
+    public float lookAheadPerSpeed = 0.9f;
 
     [Tooltip("Probes in the fan. Odd numbers keep one pointing straight ahead.")]
     [Range(3, 15)] public int probes = 7;
@@ -49,7 +56,7 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
 
     [Tooltip("Steering decisions per second. The probes only fire this often; steering is " +
              "smoothed between them, so raising it costs casts and buys very little.")]
-    public float decisionsPerSecond = 10f;
+    public float decisionsPerSecond = 14f;
 
     [Tooltip("Surfaces the probes can see. Default only, same as CarController's ground mask.")]
     public LayerMask groundMask = 1;
@@ -58,14 +65,25 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     [Tooltip("Throttle when the way ahead is clear and straight.")]
     [Range(0f, 1f)] public float cruiseThrottle = 1f;
 
-    [Tooltip("How much a hard turn cuts the throttle. 0 means it never lifts for a corner.")]
-    [Range(0f, 1f)] public float cornerLift = 0.55f;
+    [Tooltip("How much a hard turn cuts the throttle. 0 means it never lifts for a corner.\n\n" +
+             "Low on purpose. These are meant to be flat out down the hill, and with the " +
+             "lookahead now scaling with speed they see a corner early enough to take it " +
+             "without braking for it.")]
+    [Range(0f, 1f)] public float cornerLift = 0.28f;
 
     [Tooltip("How sharply the steering chases the chosen direction.")]
-    public float steerRate = 4.5f;
+    public float steerRate = 6.5f;
+
+    [Tooltip("Multiplies this car's top speed and engine power at Awake, so traffic can be " +
+             "quicker than the player's car without editing the shared vehicle values.\n\n" +
+             "Careful above about 1.2: traffic faster than the player disappears down the hill " +
+             "in the first ten seconds and there is nothing left to crash into.")]
+    [Range(0.5f, 2f)] public float speedBoost = 1.15f;
 
     [Tooltip("Penalty per degree off straight ahead, in metres of drop. Without it the car " +
-             "weaves after every marginally better line instead of committing to one.")]
+             "weaves after every marginally better line instead of committing to one. Scaled " +
+             "with the live lookahead, since a longer probe finds bigger drops and a fixed " +
+             "penalty would be swamped by them at speed.")]
     public float straightBias = 0.035f;
 
     [Header("Separation")]
@@ -102,6 +120,8 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     [SerializeField] float chosenAngleReadout;
     [SerializeField] bool reversingReadout;
     [SerializeField] bool arrivedReadout;
+    [SerializeField] float speedReadout;
+    [SerializeField] float reachReadout;
 
     CarController car;
     Rigidbody body;
@@ -125,6 +145,15 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
 
         CarInput keyboard = GetComponent<CarInput>();
         if (keyboard != null) keyboard.enabled = false;
+
+        // Applied to this INSTANCE's controller, so the shared vehicle tuning the player uses is
+        // untouched. Engine power is scaled with top speed, or the car simply takes longer to
+        // reach a higher ceiling and ends up no faster where it matters.
+        if (!Mathf.Approximately(speedBoost, 1f))
+        {
+            car.topSpeed *= speedBoost;
+            car.enginePower *= speedBoost;
+        }
     }
 
     void OnEnable() => Live.Add(this);
@@ -150,6 +179,17 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         Vector3 forward = Flat(transform.forward);
         if (forward.sqrMagnitude < 1e-4f) forward = Vector3.forward;
 
+        // Look further the faster you are going, so the car always has roughly the same amount
+        // of TIME to react rather than the same distance.
+        float speed = body != null ? body.linearVelocity.magnitude : 0f;
+        float reach = lookAhead + speed * lookAheadPerSpeed;
+        speedReadout = speed;
+        reachReadout = reach;
+
+        // A longer probe finds bigger drops, so a fixed per-degree penalty would be swamped at
+        // speed and the car would start weaving exactly when it can least afford to.
+        float bias = straightBias * (reach / Mathf.Max(1f, lookAhead));
+
         float here = GroundHeight(transform.position, 6f);
         float bestScore = float.NegativeInfinity;
         float bestAngle = 0f;
@@ -162,7 +202,7 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
             float angle = Mathf.Lerp(-probeSpread, probeSpread, t);
 
             Vector3 dir = Quaternion.AngleAxis(angle, Vector3.up) * forward;
-            Vector3 sample = transform.position + dir * lookAhead;
+            Vector3 sample = transform.position + dir * reach;
 
             float there = GroundHeight(sample, 25f);
 
@@ -170,7 +210,7 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
             // rather than the best, or cars would dive off the outside of the map.
             float drop = float.IsNegativeInfinity(there) ? -1000f : here - there;
 
-            float score = drop - Mathf.Abs(angle) * straightBias;
+            float score = drop - Mathf.Abs(angle) * bias;
             if (score <= bestScore) continue;
 
             bestScore = score;
@@ -311,18 +351,19 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         Vector3 forward = Flat(transform.forward);
         if (forward.sqrMagnitude < 1e-4f) return;
 
+        float fan = reachReadout > 1f ? reachReadout : lookAhead;
         Gizmos.color = new Color(0.3f, 0.9f, 1f, 0.8f);
         for (int i = 0; i < probes; i++)
         {
             float t = probes == 1 ? 0.5f : i / (float)(probes - 1);
             float angle = Mathf.Lerp(-probeSpread, probeSpread, t);
             Vector3 dir = Quaternion.AngleAxis(angle, Vector3.up) * forward;
-            Gizmos.DrawLine(transform.position, transform.position + dir * lookAhead);
+            Gizmos.DrawLine(transform.position, transform.position + dir * fan);
         }
 
         Gizmos.color = new Color(1f, 0.78f, 0.15f, 1f);
         Vector3 chosen = Quaternion.AngleAxis(chosenAngle, Vector3.up) * forward;
-        Gizmos.DrawLine(transform.position, transform.position + chosen * (lookAhead * 1.15f));
+        Gizmos.DrawLine(transform.position, transform.position + chosen * (fan * 1.15f));
     }
 
     static Vector3 Flat(Vector3 v)
