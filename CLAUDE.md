@@ -1431,9 +1431,45 @@ or the car merely takes longer to reach a higher ceiling and is no faster where 
 **Do not push far past 1.2** — traffic that outruns the player vanishes down the hill in the first
 ten seconds and leaves nothing to crash into, which for a crash game is worse than slightly slow.
 
-Cost: 7 probes at 14 Hz is ~2 raycasts per physics step per car, against the 4 sphere casts the
-car itself already does. **The AI is the cheap half** — the rigidbodies and their suspension are
-the real expense.
+#### Keeping control, and turning round — 2026-08-31
+
+Two faults reported after a day of play, both with a single shared cause worth naming: **the AI
+knew where it wanted to go and nothing about what the car was actually doing.**
+
+**It oversteered round obstacles and spun.** Two contributions:
+
+- **The steering signal was a staircase.** Seven probes over 110° are 18° apart, so the demand
+  could only ever be one of seven values. Rounding an obstacle meant an 18° step change, and on a
+  chassis with less rear grip than front that is how it spins. The best direction is now
+  **interpolated between probes** by fitting a parabola through the winner and its two
+  neighbours — a continuous angle for the same seven casts.
+- **It could not tell it was sliding.** It now measures **sideslip**, the angle between where the
+  car points and where it is actually going, and past `slipLimit` steers INTO the slide and lifts
+  off. Without that it kept demanding the turn that started the slide, which tightens it.
+  Steering slew is also divided by up to `steerRateAtSpeed` at speed, because a rate that feels
+  responsive at 10 m/s is a flick of the wrist at 40.
+
+**It drove backwards down the hill and never corrected.** The chain is worth remembering because
+every step of it was individually working as designed:
+
+> The forward fan sees only 110°. A car spun round by a crash finds every direction ahead rising,
+> picks the least-bad, and crawls. The stuck timer fires and reverses it — which finally goes
+> downhill. It is now moving fast, so it is never "stuck" again, and it settles into reversing
+> down the mountain indefinitely.
+
+Fixed with a **12-ray full-circle scan at 3 Hz** that answers "which way is downhill" regardless
+of facing, so the car can **know** it is facing the wrong way instead of inferring it from
+failure. Past `wrongWayAngle` for `wrongWayTime` it commits to a turnaround — full lock toward
+downhill at part throttle, which a 26 m corridor has ample room for.
+
+**That scan also fixed arrival**, which was being decided from the forward fan: *"no descent ahead
+of me"* is also true of a car facing a wall, whereas *"no descent in any direction"* is what being
+at the bottom actually means.
+
+Cost: the fan at 14 Hz plus the scan at 3 Hz is ~2.7 raycasts per physics step per car, against
+the 4 sphere casts the car itself already does. **The AI is still the cheap half** — the
+rigidbodies and their suspension are the real expense — and the Chromebook holds 60 FPS, so there
+is room to make it smarter still.
 
 #### `CarPaint` — tint per SUBMESH, never per renderer
 
