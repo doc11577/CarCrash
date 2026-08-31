@@ -86,6 +86,22 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "penalty would be swamped by them at speed.")]
     public float straightBias = 0.035f;
 
+    [Header("Dodging")]
+    [Tooltip("Extra samples taken ALONG each probe, between the car and where the probe aims. " +
+             "Without these the car only reads the ground at the far end of the ray and is " +
+             "blind to anything closer — which is why they drove into rocks.")]
+    [Range(0, 6)] public int hazardSamples = 4;
+
+    [Tooltip("Metres of rise above the car's own ground before something counts as an obstacle " +
+             "rather than a bump. Raise it to make them attack kickers again; lower it to make " +
+             "them fussier about anything raised.")]
+    public float hazardHeight = 1.1f;
+
+    [Tooltip("How much a blocked path counts against a direction, against metres of descent " +
+             "gained. Too low and they drive through rocks to reach a better line; too high and " +
+             "they refuse to pass anything and crawl down the middle.")]
+    public float hazardWeight = 2.2f;
+
     [Header("Keeping control")]
     [Tooltip("Sideslip in degrees — the angle between where the car POINTS and where it is " +
              "actually going — beyond which it counts as sliding. Past this the steering stops " +
@@ -251,7 +267,8 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
             // rather than the best, or cars would dive off the outside of the map.
             float drop = float.IsNegativeInfinity(there) ? -1000f : here - there;
 
-            scores[i] = drop - Mathf.Abs(angle) * bias;
+            scores[i] = drop - Hazard(dir, here, reach) * hazardWeight
+                             - Mathf.Abs(angle) * bias;
 
             if (scores[i] <= bestScore) continue;
             bestScore = scores[i];
@@ -265,6 +282,52 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         chosenAngle = bestAngle;
         bestDropReadout = bestDrop;
         chosenAngleReadout = bestAngle;
+    }
+
+    /// <summary>
+    /// How badly a direction is blocked BETWEEN here and where the probe is aimed.
+    /// </summary>
+    /// <remarks>
+    /// This is the fix for cars driving into boulders, and the bug it fixes is a blind spot
+    /// rather than bad tuning. Each probe used to sample ONE point, at the far end of the ray.
+    /// At speed the ray is ~49 m long, so the car read the ground height 49 m away and could not
+    /// see a rock at 10 m at all. It knew where it wanted to go and nothing about what was in
+    /// the way of getting there.
+    ///
+    /// Samples are spaced by a POWER CURVE rather than evenly, because the near field is what
+    /// you hit first: at reach 49 m, four samples land at roughly 4, 12, 23 and 35 m instead of
+    /// 10, 20, 29 and 39. Evenly spaced samples leave the first ten metres — the part you cannot
+    /// steer around any more — the least covered.
+    ///
+    /// Anything raised counts, so this avoids kickers and humps as well as rocks. That is a
+    /// deliberate trade: a car that keeps its wheels on the ground is worth more than one that
+    /// takes every jump and spins. Raise `hazardHeight` if they should attack the ramps again.
+    /// </remarks>
+    float Hazard(Vector3 dir, float here, float reach)
+    {
+        float worst = 0f;
+
+        for (int s = 1; s <= hazardSamples; s++)
+        {
+            float t = s / (float)(hazardSamples + 1);
+            float f = Mathf.Pow(t, 1.5f);
+            float h = GroundHeight(transform.position + dir * (reach * f), 25f);
+
+            // A gap in the ground close ahead is worse than any rock.
+            if (float.IsNegativeInfinity(h))
+            {
+                worst = Mathf.Max(worst, 8f);
+                continue;
+            }
+
+            float rise = h - here;
+            if (rise <= hazardHeight) continue;
+
+            // Closer is worse: the same rock is a nuisance at 35 m and unavoidable at 4 m.
+            worst = Mathf.Max(worst, (rise - hazardHeight) * (1f + (1f - f) * 2f));
+        }
+
+        return worst;
     }
 
     float ProbeAngle(int i)

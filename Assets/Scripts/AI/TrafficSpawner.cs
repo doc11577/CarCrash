@@ -7,7 +7,11 @@ using UnityEngine;
 /// A spawner rather than three cars placed by hand, so the count and the grid are one number
 /// each and a fourth car costs nothing to add.
 ///
-/// The prefab must NOT carry <see cref="PlayerCar"/>. That component claims
+/// Prefabs are picked at RANDOM per car, so a grid might be two E30s and a P72, or three P72s.
+/// Kept separate from CarRoster on purpose: the roster is what the player can BUY and its
+/// prefabs carry PlayerCar, so spawning those as traffic would hand PlayerCar.Current to an AI.
+///
+/// A traffic prefab must NOT carry <see cref="PlayerCar"/>. That component claims
 /// <c>PlayerCar.Current</c> in its OnEnable, so a traffic car built from the player's prefab
 /// would take over as "the player's car" the moment it spawned — scoring, and later the camera,
 /// would follow the wrong vehicle. Stripping it after the fact is worse, not better: destroying
@@ -18,9 +22,18 @@ using UnityEngine;
 public class TrafficSpawner : MonoBehaviour
 {
     [Header("What to spawn")]
-    [Tooltip("Traffic car prefab. Must have CarController, CarDamage and TrafficDriver, and " +
-             "must NOT have PlayerCar or CarInput.")]
-    public GameObject carPrefab;
+    [Tooltip("Traffic car prefabs, picked at random per car — so a grid might be two E30s and a " +
+             "P72, or three P72s, or anything else. Each must have CarController, CarDamage and " +
+             "TrafficDriver, and must NOT have PlayerCar or CarInput.\n\n" +
+             "Separate from the CarRoster on purpose: the roster is what the PLAYER can buy, and " +
+             "its prefabs carry PlayerCar. Spawning those as traffic would hand PlayerCar.Current " +
+             "to an AI car.")]
+    public GameObject[] carPrefabs = new GameObject[0];
+
+    [Tooltip("0 gives a different mix every run. Any other value makes the mix reproducible, " +
+             "which is what you want while tuning — otherwise a change to the AI and a change " +
+             "in the field happen at once and neither can be judged.")]
+    public int mixSeed = 0;
 
     [Tooltip("How many. Three is what the valley is sized for; more is fine, but every car is " +
              "a rigidbody plus four sphere casts a physics step.")]
@@ -68,23 +81,40 @@ public class TrafficSpawner : MonoBehaviour
     [Header("Read-only")]
     [SerializeField] int spawned;
 
+    System.Random mix;
+
     void Start()
     {
-        if (carPrefab == null)
+        usable.Clear();
+
+        foreach (GameObject prefab in carPrefabs)
         {
-            Debug.LogWarning("TrafficSpawner has no car prefab, so no traffic will appear.", this);
+            if (prefab == null) continue;
+
+            if (prefab.GetComponent<PlayerCar>() != null)
+            {
+                Debug.LogError(
+                    $"TrafficSpawner: traffic prefab '{prefab.name}' has a PlayerCar component. " +
+                    "It would claim PlayerCar.Current and scoring, and later the camera, would " +
+                    "follow a traffic car instead of the player. Remove PlayerCar from the " +
+                    "prefab — do not strip it at runtime, because destroying it clears Current " +
+                    "and unregisters the real player's car too. Skipping this one.", this);
+                continue;
+            }
+
+            usable.Add(prefab);
+        }
+
+        if (usable.Count == 0)
+        {
+            Debug.LogWarning("TrafficSpawner has no usable car prefabs, so no traffic will " +
+                             "appear.", this);
             return;
         }
 
-        if (carPrefab.GetComponent<PlayerCar>() != null)
-        {
-            Debug.LogError(
-                "TrafficSpawner: the traffic prefab has a PlayerCar component. It would claim " +
-                "PlayerCar.Current and scoring would follow a traffic car instead of the " +
-                "player. Remove PlayerCar from the prefab — do not strip it at runtime, because " +
-                "destroying it clears Current and unregisters the real player's car too.", this);
-            return;
-        }
+        // Its own generator rather than UnityEngine.Random, so seeding the mix cannot disturb
+        // anything else that happens to draw from the shared one that frame.
+        mix = mixSeed == 0 ? new System.Random() : new System.Random(mixSeed);
 
         Transform origin = grid != null ? grid : transform;
 
@@ -93,6 +123,9 @@ public class TrafficSpawner : MonoBehaviour
 
         spawned = count;
     }
+
+    readonly System.Collections.Generic.List<GameObject> usable =
+        new System.Collections.Generic.List<GameObject>();
 
     void Spawn(Transform origin, int index)
     {
@@ -106,8 +139,9 @@ public class TrafficSpawner : MonoBehaviour
                            - origin.forward * (row * rowSpacing)
                            + Vector3.up * dropHeight;
 
-        GameObject car = Instantiate(carPrefab, position, origin.rotation);
-        car.name = $"Traffic{index:00}";
+        GameObject prefab = usable[mix.Next(usable.Count)];
+        GameObject car = Instantiate(prefab, position, origin.rotation);
+        car.name = $"Traffic{index:00}_{prefab.name}";
 
         CarPaint paint = car.GetComponent<CarPaint>();
         if (paint != null && palette != null && palette.Length > 0)
