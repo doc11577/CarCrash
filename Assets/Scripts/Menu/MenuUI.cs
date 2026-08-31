@@ -61,6 +61,7 @@ public class MenuUI : MonoBehaviour
     TextMeshProUGUI carCredit;
     TMP_InputField devField;
     TextMeshProUGUI devStatus;
+    TextMeshProUGUI fullscreenLabel;
     int carIndex;
 
     void Awake()
@@ -122,7 +123,7 @@ public class MenuUI : MonoBehaviour
                    $"{PlayerWallet.Gears:N0} gears banked   ·   best run {PlayerWallet.BestRun:N0}"
                    + (DevMode.Enabled ? "   ·   DEV" : ""),
                    28f, UiKit.Muted, TextAlignmentOptions.Center,
-                   new Vector2(0f, -70f), new Vector2(900f, 40f));
+                   new Vector2(0f, -125f), new Vector2(900f, 40f));
 
         UiKit.Text(page.transform, "Drive downhill. Destroy the car. Earn gears.",
                    26f, UiKit.Muted, TextAlignmentOptions.Center,
@@ -240,6 +241,19 @@ public class MenuUI : MonoBehaviour
                          RefreshDev();
                      });
 
+        fullscreenLabel = UiKit.Button(page.transform, Fullscreen.Label,
+                                       new Vector2(0f, -180f), new Vector2(440f, 60f),
+                                       () =>
+                                       {
+                                           Fullscreen.Toggle();
+                                           // Relabelled on the NEXT frame would be
+                                           // cleaner, but the browser applies the
+                                           // change synchronously enough that reading
+                                           // it straight back is right in practice.
+                                           RefreshFullscreenLabel();
+                                       })
+                                  .GetComponentInChildren<TextMeshProUGUI>();
+
         UiKit.Button(page.transform, "BACK", new Vector2(0f, -380f), new Vector2(280f, 62f),
                      () => Show(Page.Main));
 
@@ -262,6 +276,11 @@ public class MenuUI : MonoBehaviour
 
         RefreshDev();
         RefreshCars();
+    }
+
+    void RefreshFullscreenLabel()
+    {
+        if (fullscreenLabel != null) fullscreenLabel.text = Fullscreen.Label;
     }
 
     void RefreshDev()
