@@ -47,7 +47,7 @@ public class MenuUI : MonoBehaviour
     [Tooltip("Seconds the loading bar is held on screen at minimum, so it does not flash.")]
     public float minimumLoadTime = 0.4f;
 
-    enum Page { Main, Maps, Cars }
+    enum Page { Main, Maps, Cars, Options }
 
     RectTransform root;
     readonly Dictionary<Page, GameObject> pages = new Dictionary<Page, GameObject>();
@@ -59,6 +59,8 @@ public class MenuUI : MonoBehaviour
     TextMeshProUGUI actionLabel;
     UnityEngine.UI.Button actionButton;
     TextMeshProUGUI carCredit;
+    TMP_InputField devField;
+    TextMeshProUGUI devStatus;
     int carIndex;
 
     void Awake()
@@ -78,8 +80,10 @@ public class MenuUI : MonoBehaviour
         pages[Page.Main] = BuildMain();
         pages[Page.Maps] = BuildMaps();
         pages[Page.Cars] = BuildCars();
+        pages[Page.Options] = BuildOptions();
 
         RestoreSelection();
+        RefreshDev();
         Show(Page.Main);
     }
 
@@ -106,13 +110,17 @@ public class MenuUI : MonoBehaviour
                    TextAlignmentOptions.Center, new Vector2(0f, 250f), new Vector2(1200f, 140f))
              .fontStyle = FontStyles.Bold;
 
-        UiKit.Button(page.transform, "PLAY", new Vector2(0f, 40f), new Vector2(420f, 74f),
+        UiKit.Button(page.transform, "PLAY", new Vector2(0f, 60f), new Vector2(420f, 74f),
                      () => Show(Page.Maps), accent: true);
+
+        UiKit.Button(page.transform, "OPTIONS", new Vector2(0f, -30f), new Vector2(420f, 66f),
+                     () => Show(Page.Options));
 
         // Banked gears, so the currency is visible from the first screen rather than only
         // appearing once a run has been scored.
         UiKit.Text(page.transform,
-                   $"{PlayerWallet.Gears} gears banked   ·   best run {PlayerWallet.BestRun}",
+                   $"{PlayerWallet.Gears:N0} gears banked   ·   best run {PlayerWallet.BestRun:N0}"
+                   + (DevMode.Enabled ? "   ·   DEV" : ""),
                    28f, UiKit.Muted, TextAlignmentOptions.Center,
                    new Vector2(0f, -70f), new Vector2(900f, 40f));
 
@@ -200,6 +208,70 @@ public class MenuUI : MonoBehaviour
                      () => Show(Page.Maps));
 
         return page;
+    }
+
+    GameObject BuildOptions()
+    {
+        GameObject page = NewPage("Options");
+
+        UiKit.Text(page.transform, "OPTIONS", 64f, UiKit.Ink,
+                   TextAlignmentOptions.Center, new Vector2(0f, 300f), new Vector2(1200f, 90f))
+             .fontStyle = FontStyles.Bold;
+
+        UiKit.Text(page.transform, "Dev mode", 30f, UiKit.Ink,
+                   TextAlignmentOptions.Right, new Vector2(-330f, 90f), new Vector2(240f, 46f));
+
+        devField = UiKit.Field(page.transform, "code", new Vector2(-30f, 90f),
+                               new Vector2(340f, 56f));
+        devField.contentType = TMP_InputField.ContentType.Password;
+        devField.onSubmit.AddListener(_ => SubmitDevCode());
+
+        UiKit.Button(page.transform, "SUBMIT", new Vector2(240f, 90f), new Vector2(200f, 56f),
+                     SubmitDevCode);
+
+        devStatus = UiKit.Text(page.transform, "", 26f, UiKit.Muted,
+                               TextAlignmentOptions.Center, new Vector2(0f, 10f),
+                               new Vector2(1000f, 40f));
+
+        UiKit.Button(page.transform, "TURN DEV MODE OFF", new Vector2(0f, -80f),
+                     new Vector2(440f, 60f), () =>
+                     {
+                         DevMode.Disable();
+                         RefreshDev();
+                     });
+
+        UiKit.Button(page.transform, "BACK", new Vector2(0f, -380f), new Vector2(280f, 62f),
+                     () => Show(Page.Main));
+
+        return page;
+    }
+
+    void SubmitDevCode()
+    {
+        if (devField == null) return;
+
+        bool ok = DevMode.TryUnlock(devField.text);
+        devField.text = "";
+
+        if (!ok)
+        {
+            devStatus.color = new Color(0.95f, 0.45f, 0.35f);
+            devStatus.text = "Not a valid code.";
+            return;
+        }
+
+        RefreshDev();
+        RefreshCars();
+    }
+
+    void RefreshDev()
+    {
+        if (devStatus == null) return;
+
+        devStatus.color = DevMode.Enabled ? UiKit.Accent : UiKit.Muted;
+        devStatus.text = DevMode.Enabled
+            ? $"DEV MODE ON  ·  {PlayerWallet.Gears:N0} gears  ·  car tuning on the pause screen"
+            : "Off. Enter the code to unlock car tuning and gears.";
     }
 
     CarRoster.Entry[] Entries()

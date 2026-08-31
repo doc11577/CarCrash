@@ -34,8 +34,33 @@ public class PlayerCarSpawner : MonoBehaviour
     [Header("Read-only")]
     [SerializeField] string spawnedCar;
 
+    /// <summary>
+    /// Set by whichever spawner runs first this scene load.
+    /// </summary>
+    /// <remarks>
+    /// [DisallowMultipleComponent] only stops two copies on ONE object, and the natural mistake
+    /// is putting one on the manager and another on the spawn point — which is exactly what
+    /// happened, and produced two player cars. Two PlayerCars then fight over
+    /// PlayerCar.Current and the camera follows whichever won.
+    ///
+    /// Reset in OnDestroy rather than only on scene load, so a restart is not blocked by the
+    /// previous run's flag.
+    /// </remarks>
+    static PlayerCarSpawner active;
+
     void Awake()
     {
+        if (active != null && active != this)
+        {
+            Debug.LogError(
+                $"PlayerCarSpawner is on more than one object ('{active.name}' and '{name}'), " +
+                "which spawns two player cars that then fight over PlayerCar.Current. This one " +
+                "is standing down — remove the extra component.", this);
+            return;
+        }
+
+        active = this;
+
         if (roster == null)
         {
             Debug.LogError("PlayerCarSpawner has no CarRoster, so no player car will exist.", this);
@@ -57,5 +82,10 @@ public class PlayerCarSpawner : MonoBehaviour
                                      at.rotation);
         car.name = entry.displayName;
         spawnedCar = entry.id;
+    }
+
+    void OnDestroy()
+    {
+        if (active == this) active = null;
     }
 }

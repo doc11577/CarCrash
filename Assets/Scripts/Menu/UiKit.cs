@@ -150,6 +150,59 @@ public static class UiKit
         if (text != null) text.color = accent ? Ground : Ink;
     }
 
+    /// <summary>A single-line text box.</summary>
+    /// <remarks>
+    /// Built by hand rather than from a prefab, for the same reason everything else here is.
+    /// TMP_InputField needs three pieces wired to each other — a viewport with a RectMask2D, a
+    /// text component inside it, and a placeholder — and it silently does nothing if any of
+    /// them is missing, which is a miserable thing to debug in a scene file.
+    /// </remarks>
+    public static TMP_InputField Field(Transform parent, string placeholder, Vector2 pos,
+                                       Vector2 box, float size = 28f)
+    {
+        GameObject go = new GameObject("Field", typeof(RectTransform));
+        go.transform.SetParent(parent, false);
+        Centre((RectTransform)go.transform, pos, box);
+
+        Image background = go.AddComponent<Image>();
+        background.color = new Color(0.13f, 0.11f, 0.15f, 1f);
+
+        GameObject viewport = new GameObject("Viewport", typeof(RectTransform));
+        viewport.transform.SetParent(go.transform, false);
+        RectTransform view = (RectTransform)viewport.transform;
+        view.anchorMin = Vector2.zero;
+        view.anchorMax = Vector2.one;
+        view.offsetMin = new Vector2(14f, 6f);
+        view.offsetMax = new Vector2(-14f, -6f);
+        viewport.AddComponent<RectMask2D>();
+
+        TextMeshProUGUI text = Text(viewport.transform, "", size, Ink,
+                                    TextAlignmentOptions.Left, Vector2.zero, box);
+        Stretch(text.rectTransform);
+
+        TextMeshProUGUI hint = Text(viewport.transform, placeholder, size, Muted,
+                                    TextAlignmentOptions.Left, Vector2.zero, box);
+        Stretch(hint.rectTransform);
+
+        TMP_InputField field = go.AddComponent<TMP_InputField>();
+        field.targetGraphic = background;
+        field.textViewport = view;
+        field.textComponent = text;
+        field.placeholder = hint;
+        field.lineType = TMP_InputField.LineType.SingleLine;
+        field.text = "";
+
+        return field;
+    }
+
+    static void Stretch(RectTransform rect)
+    {
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+    }
+
     /// <summary>Anchor to the middle of the screen and place by offset from centre.</summary>
     public static void Centre(RectTransform rect, Vector2 pos, Vector2 box)
     {

@@ -56,6 +56,14 @@ public class PerfReadout : MonoBehaviour
 
     void OnGUI()
     {
+        // Hidden unless dev mode. It is a development tool with an IMGUI cost, and it has no
+        // business sitting in the corner of a shipped build.
+        if (!DevMode.Enabled) return;
+        Draw();
+    }
+
+    void Draw()
+    {
         if (style == null)
         {
             style = new GUIStyle(GUI.skin.label);
