@@ -196,6 +196,11 @@ events arrive and the gear counter climbs. What is confirmed is exactly that cha
 **the combo multiplier, the floating popups, the part bonus and banking to `PlayerWallet` have
 all still never been observed.** See the unrun list below.
 
+**The front end works (2026-08-30).** Main menu, map select, car select, GO, TAB pause, resume and
+return to menu all confirmed. That also confirms the code-built canvases, the
+`InputSystemUIInputModule` created by `UiKit.EnsureEventSystem`, `RestartOverlay`'s load-by-name
+path, and the pause menu running on unscaled time at `timeScale 0`.
+
 **Quarry01 drives, and the traffic races it (2026-08-30).** The course was imported, textured with
 the CC0 Poly Haven pair, and driven. Three AI cars run it flat out. Confirmed along the way: the
 scoring popups, sustained damage not building combo, the combo multiplier, the SphereCast ground
@@ -209,25 +214,6 @@ subscription.** That is what the read-only fields on `RunScore` and `ScoreHud` a
 Console warning naming the missing component was on screen the whole time.
 
 ### Never run in Unity — still inspection-clean only
-
-- **THE WHOLE FRONT END.** `MenuUI`, `UiKit` and `PauseMenu` were written 2026-08-30 and have not
-  been confirmed running. Menus are exactly where "compiles and the logic is straightforward"
-  and "actually works" diverge, and there are two specific ways this fails silently:
-  - **A missing EventSystem, or the wrong input module.** This project uses the Input System
-    package, so it must be `InputSystemUIInputModule` — the legacy `StandaloneInputModule` reads
-    the disabled `Input` class and every button is dead with no error. `UiKit.EnsureEventSystem`
-    creates the right one, but only if nothing else already made a wrong one.
-  - **Scenes missing from the Scene List.** `LoadSceneAsync` returns null for an unlisted scene.
-    `RestartOverlay` now logs an explicit error rather than NullReferencing and leaving
-    `InProgress` stuck true, which would deadlock every later load including R-restart.
-
-  Also unverified: that the pause menu's unscaled-time handling actually works at `timeScale 0`,
-  and that returning to the menu leaves the clock running.
-
-- **Banking to `PlayerWallet`.** Fires from `RunScore.OnDestroy`. The main menu now prints the
-  balance and the best run, so a run followed by a return to the menu is the check — but that
-  path is itself unrun. Failing that, read the Editor's PlayerPrefs at
-  `HKCU\Software\Unity\UnityEditor\DefaultCompany\CarCrash`.
 
 - **The part bonus popup.** Needs a panel to actually come off, which is itself unrun (below).
   `Part.displayName` was added so the caption reads "Wheel Front Right" rather than `WHEEL-FR`;
@@ -259,11 +245,10 @@ Console warning naming the missing component was on screen the whole time.
 
 ### Open, in rough priority order
 
-0. **Play-test the front end, which has never been run.** Open `MainMenu`, press play: PLAY →
-   map → car → GO → the run → TAB → RESUME → TAB → RETURN TO MENU, and check the banked gears
-   on the main screen went up. If buttons do nothing, suspect the EventSystem's input module
-   before anything else; if a load hangs or errors, suspect the Scene List. Both are in
-   *Never run in Unity* above.
+0. **DONE — the front end works.** Confirmed 2026-08-30: PLAY →
+   map → car → GO → the run → TAB → RESUME → TAB → RETURN TO MENU all work. Banked gears
+   appear on the main screen. If a future change breaks it: suspect the EventSystem input module
+   first, then the Scene List.
 
    Requires: `MainMenu.unity` with a `MenuUI` object, `PauseMenu` on **GameManager** in
    `Quarry`, and **both scenes in File > Build Profiles > Scene List**.
@@ -313,8 +298,8 @@ Build order — expensive unknowns first, content last:
    **scoring wired and counting** (gears · combo · HUD · wallet · `PlayerCar` self-registration) ·
    **Quarry01 built, textured and driven** (generator · kickers · bays · mountainsides · CC0 textures) ·
    **traffic AI racing the hill** (descent-seeking · obstacle avoidance · destructible · painted)
-2. **Now** — **play-test the front end** (menu → map → car → GO → TAB → return) ·
-   ram a wall and confirm panels and wheels detach · re-tune damage and scoring now traffic
+2. **Now** — **ram a wall and confirm panels and wheels detach** (the oldest unverified thing) ·
+   re-tune damage and scoring now traffic
    exists · rebuild and re-measure download size ·
    **get a real frame-rate number off a school Chromebook — this is now overdue.** The scene has
    gained a 100k-triangle course, three extra rigidbodies with suspension, two 1K textures and a
@@ -322,12 +307,10 @@ Build order — expensive unknowns first, content last:
    reasoning rather than measurement. In-game CC-BY attribution is **done** — it is on the car
    select screen.
 3. **Next** — the agreed order (scoring → first real map → menu → traffic) is **built end to end
-   as of 2026-08-30**. Scoring counts, Quarry01 drives and is textured, the menu exists, and
+   as of 2026-08-30**. Scoring counts, Quarry01 drives and is textured, the menu works, and
    three AI cars race the hill. What is left on it:
-   - **Play-test the front end.** Menu, map select, car select, GO, TAB pause, return to menu.
-     None of it has been run.
-   - **The garage.** Deferred from "menu and garage" — car select exists but nothing is bought,
-     and `PlayerWallet.Spend` has no caller.
+   - **The garage.** Car select exists but nothing is bought, and `PlayerWallet.Spend` has no
+     caller. This is the link that closes the loop: crash, earn gears, buy a car, race again.
    - **Re-tune the scoring numbers now that traffic exists**, and decide whether hitting traffic
      should pay (`TrafficSpawner.scoreTrafficDamage`, currently off).
    - **Rebuild and re-measure the download**, which has not been done since TMP essentials,
