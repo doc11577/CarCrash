@@ -12,7 +12,8 @@ public class PerfReadout : MonoBehaviour
     [Tooltip("How often the numbers refresh, in seconds.")]
     public float sampleInterval = 0.5f;
 
-    [Tooltip("Optional. Shows the car's speed alongside the frame rate.")]
+    [Tooltip("Optional. Shows the car's speed alongside the frame rate. Leave empty and it " +
+             "picks up whatever car the garage spawned.")]
     public CarController car;
 
     GUIStyle style;
@@ -24,6 +25,8 @@ public class PerfReadout : MonoBehaviour
 
     void Update()
     {
+        if (car == null && PlayerCar.Current != null) car = PlayerCar.Current.Controller;
+
         frames++;
         accum += Time.unscaledDeltaTime;
         timer += Time.unscaledDeltaTime;

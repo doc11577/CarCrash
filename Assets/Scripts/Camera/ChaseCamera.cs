@@ -147,6 +147,16 @@ public class ChaseCamera : MonoBehaviour
 
     void LateUpdate()
     {
+        // Acquire the car lazily rather than in Awake. The player's car is SPAWNED now, so at
+        // Awake there may be nothing to follow yet, and a camera that gave up once would follow
+        // nothing for the whole run.
+        if (target == null && PlayerCar.Current != null)
+        {
+            target = PlayerCar.Current.transform;
+            targetBody = PlayerCar.Current.GetComponent<Rigidbody>();
+            initialised = false;
+        }
+
         if (target == null) return;
 
         float dt = Time.deltaTime;

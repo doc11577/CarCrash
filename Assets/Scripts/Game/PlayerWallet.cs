@@ -54,11 +54,54 @@ public static class PlayerWallet
         return true;
     }
 
-    /// <summary>Wipe the balance and the best run. For a settings screen, or for testing.</summary>
+    // ---- owned cars -------------------------------------------------------------------------
+
+    const string OwnedKey = "carcrash.owned";
+
+    /// <summary>
+    /// Cars the player has bought, as a delimited id list.
+    /// </summary>
+    /// <remarks>
+    /// Ids rather than indices, and a delimiter rather than JSON, because this has to survive
+    /// the roster being reordered and the game being updated. An index would hand the player a
+    /// different car every time the list changed; a bespoke format would be one more thing to
+    /// break. The pipe cannot appear in an id, which is enforced by <see cref="Buy"/>.
+    ///
+    /// Cars flagged ownedFromTheStart are NOT written here — they are owned by definition, and
+    /// storing them would mean a starter car could be "lost" by clearing prefs.
+    /// </remarks>
+    public static bool Owns(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return false;
+        return ("|" + PlayerPrefs.GetString(OwnedKey, "") + "|").Contains("|" + id + "|");
+    }
+
+    /// <summary>
+    /// Buy a car. Returns false and changes nothing if it is already owned, the id is unusable,
+    /// or the balance will not cover it — so the caller can use this as both test and purchase
+    /// and cannot accidentally charge twice.
+    /// </summary>
+    public static bool Buy(string id, int price)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Contains("|")) return false;
+        if (Owns(id)) return false;
+
+        // Spend refuses a non-positive amount, so a free-but-not-starter car would be
+        // permanently unbuyable if this went through it unconditionally.
+        if (price > 0 && !Spend(price)) return false;
+
+        string owned = PlayerPrefs.GetString(OwnedKey, "");
+        PlayerPrefs.SetString(OwnedKey, string.IsNullOrEmpty(owned) ? id : owned + "|" + id);
+        PlayerPrefs.Save();
+        return true;
+    }
+
+    /// <summary>Wipe the balance, the best run and every purchase. For testing.</summary>
     public static void ResetAll()
     {
         PlayerPrefs.DeleteKey(GearsKey);
         PlayerPrefs.DeleteKey(BestRunKey);
+        PlayerPrefs.DeleteKey(OwnedKey);
         PlayerPrefs.Save();
     }
 }

@@ -35,22 +35,13 @@ public class MenuUI : MonoBehaviour
         public string blurb = "1,800 m  ·  270 m drop  ·  about 90 seconds";
     }
 
-    [Serializable]
-    public class CarChoice
-    {
-        public string id = "e30";
-        public string displayName = "BMW E30";
-        public string blurb = "1,200 kg  ·  rear wheel drive";
-
-        [Tooltip("Attribution shown on this screen. REQUIRED for anything CC-BY — the E30 " +
-                 "licence obliges us to credit ROH3D visibly, not just in CREDITS.md.")]
-        public string credit = "BMW E30 1985 by ROH3D  ·  CC BY 4.0";
-    }
-
     [Header("Content")]
     public string title = "CAR CRASH";
     public MapChoice[] maps = new MapChoice[] { new MapChoice() };
-    public CarChoice[] cars = new CarChoice[] { new CarChoice() };
+
+    [Tooltip("The shared roster asset. Same one PlayerCarSpawner uses, so the car you buy is " +
+             "the car that spawns.")]
+    public CarRoster roster;
 
     [Header("Loading")]
     [Tooltip("Seconds the loading bar is held on screen at minimum, so it does not flash.")]
@@ -63,6 +54,10 @@ public class MenuUI : MonoBehaviour
     readonly List<UnityEngine.UI.Button> carButtons = new List<UnityEngine.UI.Button>();
 
     TextMeshProUGUI carBlurb;
+    TextMeshProUGUI carStatus;
+    TextMeshProUGUI gearsLine;
+    TextMeshProUGUI actionLabel;
+    UnityEngine.UI.Button actionButton;
     TextMeshProUGUI carCredit;
     int carIndex;
 
@@ -161,39 +156,84 @@ public class MenuUI : MonoBehaviour
     {
         GameObject page = NewPage("Cars");
 
-        UiKit.Text(page.transform, "SELECT CAR", 64f, UiKit.Ink,
-                   TextAlignmentOptions.Center, new Vector2(0f, 320f), new Vector2(1200f, 90f))
+        UiKit.Text(page.transform, "GARAGE", 64f, UiKit.Ink,
+                   TextAlignmentOptions.Center, new Vector2(0f, 330f), new Vector2(1200f, 90f))
              .fontStyle = FontStyles.Bold;
 
+        gearsLine = UiKit.Text(page.transform, "", 28f, UiKit.Accent,
+                               TextAlignmentOptions.Center, new Vector2(0f, 268f),
+                               new Vector2(900f, 40f));
+
         carButtons.Clear();
-        for (int i = 0; i < cars.Length; i++)
+        CarRoster.Entry[] entries = Entries();
+
+        for (int i = 0; i < entries.Length; i++)
         {
             int index = i;
-            CarChoice car = cars[i];
-            if (car == null) continue;
-
-            carButtons.Add(UiKit.Button(page.transform, car.displayName,
-                                        new Vector2(0f, 170f - i * 100f),
-                                        new Vector2(660f, 82f), () => ChooseCar(index)));
+            carButtons.Add(UiKit.Button(page.transform, entries[i].displayName,
+                                        new Vector2(0f, 170f - i * 96f),
+                                        new Vector2(660f, 78f), () => ChooseCar(index)));
         }
 
         carBlurb = UiKit.Text(page.transform, "", 26f, UiKit.Muted,
-                              TextAlignmentOptions.Center, new Vector2(0f, -40f),
+                              TextAlignmentOptions.Center, new Vector2(0f, -50f),
                               new Vector2(900f, 36f));
+
+        carStatus = UiKit.Text(page.transform, "", 30f, UiKit.Ink,
+                               TextAlignmentOptions.Center, new Vector2(0f, -102f),
+                               new Vector2(900f, 40f));
 
         // Attribution lives here because this is the screen the car is chosen on, and CC-BY
         // requires the credit to be visible in the product, not only in CREDITS.md.
-        carCredit = UiKit.Text(page.transform, "", 22f, UiKit.Muted,
-                               TextAlignmentOptions.Center, new Vector2(0f, -100f),
-                               new Vector2(1100f, 32f));
+        carCredit = UiKit.Text(page.transform, "", 21f, UiKit.Muted,
+                               TextAlignmentOptions.Center, new Vector2(0f, -152f),
+                               new Vector2(1100f, 30f));
 
-        UiKit.Button(page.transform, "GO", new Vector2(0f, -220f), new Vector2(420f, 78f),
-                     StartRun, accent: true);
+        // ONE action button that changes meaning, rather than a BUY and a GO sitting side by
+        // side with one of them always dead. What you can do with the selected car is never
+        // both at once.
+        actionButton = UiKit.Button(page.transform, "GO", new Vector2(0f, -240f),
+                                    new Vector2(440f, 78f), Act, accent: true);
+        actionLabel = actionButton.GetComponentInChildren<TextMeshProUGUI>();
 
         UiKit.Button(page.transform, "BACK", new Vector2(0f, -380f), new Vector2(280f, 62f),
                      () => Show(Page.Maps));
 
         return page;
+    }
+
+    CarRoster.Entry[] Entries()
+    {
+        return roster != null && roster.cars != null
+            ? System.Array.FindAll(roster.cars, e => e != null)
+            : new CarRoster.Entry[0];
+    }
+
+    /// <summary>Buy it if it is not owned, drive it if it is.</summary>
+    void Act()
+    {
+        CarRoster.Entry[] entries = Entries();
+        if (entries.Length == 0) return;
+
+        CarRoster.Entry car = entries[Mathf.Clamp(carIndex, 0, entries.Length - 1)];
+
+        if (car.Owned)
+        {
+            StartRun();
+            return;
+        }
+
+        if (PlayerWallet.Buy(car.id, car.price))
+        {
+            GameSelection.CarId = car.id;
+            RefreshCars();
+            return;
+        }
+
+        // Not enough gears. Say so rather than doing nothing, or a dead button reads as a bug.
+        int short_ = car.price - PlayerWallet.Gears;
+        carStatus.text = $"{short_:N0} gears short";
+        carStatus.color = new Color(0.95f, 0.45f, 0.35f);
     }
 
     // ---- flow -----------------------------------------------------------------------------
@@ -206,9 +246,11 @@ public class MenuUI : MonoBehaviour
 
     void RestoreSelection()
     {
+        CarRoster.Entry[] entries = Entries();
+
         carIndex = 0;
-        for (int i = 0; i < cars.Length; i++)
-            if (cars[i] != null && cars[i].id == GameSelection.CarId) carIndex = i;
+        for (int i = 0; i < entries.Length; i++)
+            if (entries[i].id == GameSelection.CarId) carIndex = i;
 
         ChooseCar(carIndex);
     }
@@ -221,18 +263,41 @@ public class MenuUI : MonoBehaviour
 
     void ChooseCar(int index)
     {
-        if (cars == null || cars.Length == 0) return;
+        CarRoster.Entry[] entries = Entries();
+        if (entries.Length == 0) return;
 
-        carIndex = Mathf.Clamp(index, 0, cars.Length - 1);
-        CarChoice car = cars[carIndex];
-        if (car == null) return;
+        carIndex = Mathf.Clamp(index, 0, entries.Length - 1);
 
-        GameSelection.CarId = car.id;
+        // Only remember a car the player actually owns. Selecting one in the garage to read its
+        // price must not silently change what spawns on the next run.
+        if (entries[carIndex].Owned) GameSelection.CarId = entries[carIndex].id;
+
+        RefreshCars();
+    }
+
+    /// <summary>Repaint the garage from the wallet. Called after a purchase too.</summary>
+    void RefreshCars()
+    {
+        CarRoster.Entry[] entries = Entries();
+        if (entries.Length == 0) return;
+
+        CarRoster.Entry car = entries[Mathf.Clamp(carIndex, 0, entries.Length - 1)];
+
+        if (gearsLine != null) gearsLine.text = $"{PlayerWallet.Gears:N0} gears";
         if (carBlurb != null) carBlurb.text = car.blurb;
         if (carCredit != null) carCredit.text = car.credit;
 
-        for (int i = 0; i < carButtons.Count; i++)
-            UiKit.Tint(carButtons[i], i == carIndex);
+        if (carStatus != null)
+        {
+            carStatus.color = car.Owned ? UiKit.Muted : UiKit.Accent;
+            carStatus.text = car.Owned ? "OWNED" : $"{car.price:N0} gears";
+        }
+
+        if (actionLabel != null)
+            actionLabel.text = car.Owned ? "GO" : $"BUY  ·  {car.price:N0}";
+
+        for (int i = 0; i < carButtons.Count && i < entries.Length; i++)
+            UiKit.Tint(carButtons[i], entries[i].id == GameSelection.CarId);
     }
 
     void StartRun()
