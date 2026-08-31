@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 44df854481660db4b8d22ddd3501298a, type: 3}
+  m_Name: CarRoster
+  m_EditorClassIdentifier: Assembly-CSharp::CarRoster
+  cars:
+  - id: e30
+    displayName: BMW E30
+    prefab: {fileID: 521731838676468038, guid: 36c8ae86c35a4284180cef82ff3100e2, type: 3}
+    price: 0
+    ownedFromTheStart: 1
+    blurb: "1,200 kg \xB7 rear drive"
+    credit: "BMW E30 1985 by ROH3D \xB7 CC BY 4.0"
+  - id: p72
+    displayName: De Tomaso P72
+    prefab: {fileID: 2068478204062595931, guid: 6c79fa60cb511ad4c88e772ac028f6e0, type: 3}
+    price: 50000
+    ownedFromTheStart: 0
+    blurb: "Mid-engine \xB7 44 m/s"
+    credit: "De Tomaso P72 by ROH3D \xB7 CC BY 4.0"

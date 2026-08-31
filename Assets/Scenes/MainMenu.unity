@@ -281,11 +281,7 @@ MonoBehaviour:
     displayName: Quarry Descent
     sceneName: Quarry
     blurb: "1,800 m  \xB7  270 m drop  \xB7  about 90 seconds"
-  cars:
-  - id: e30
-    displayName: BMW E30
-    blurb: "1,200 kg  \xB7  rear wheel drive"
-    credit: "BMW E30 1985 by ROH3D  \xB7  CC BY 4.0"
+  roster: {fileID: 11400000, guid: d2c20dc4353d8a4429439e0ac46751d1, type: 2}
   minimumLoadTime: 0.4
 --- !u!4 &618861122
 Transform:
