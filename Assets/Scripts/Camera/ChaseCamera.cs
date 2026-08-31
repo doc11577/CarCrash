@@ -4,9 +4,10 @@ using UnityEngine.InputSystem;
 /// <summary>
 /// Automatic chase camera. The player never has to steer it.
 ///
-/// There is one optional exception: hold left mouse and drag to look around while stopped
-/// (see <see cref="UpdateLookAround"/>). It is never required, driving overrules it, and it
-/// returns on its own — so the standing "no camera the player must manage" rule still holds.
+/// There is one optional exception: hold left mouse and drag to look around, at any speed
+/// (see <see cref="UpdateLookAround"/>). It is never required, it holds for a moment when you
+/// let go and then returns on its own — so the standing "no camera the player must manage" rule
+/// still holds.
 ///
 /// Fixes the four things the reference game gets wrong:
 ///   1. It follows the direction the car is MOVING, not the direction it is facing,
@@ -110,11 +111,11 @@ public class ChaseCamera : MonoBehaviour
     [Tooltip("How far above the resting angle you can look, in degrees.")]
     public float maxLookPitch = 45f;
 
-    [Tooltip("Driving faster than this (m/s) takes the camera back. This is the safety net.")]
-    public float lookCancelSpeed = 2f;
 
-    [Tooltip("Seconds after letting go before the camera starts swinging back.")]
-    public float lookReturnDelay = 0.35f;
+    [Tooltip("Seconds the camera HOLDS where you left it after you let go, before it starts " +
+             "swinging back. Long enough to keep watching what you just hit as you drive away; " +
+             "short enough that it is back on the road before you need it.")]
+    public float lookReturnDelay = 1f;
 
     [Tooltip("How fast the camera returns to its automatic framing. Higher is snappier.")]
     public float lookReturnSharpness = 3f;
@@ -258,11 +259,18 @@ public class ChaseCamera : MonoBehaviour
 
         Mouse mouse = Mouse.current;
 
-        // Driving wins, always. Above walking pace the drag is ignored outright, so the
-        // camera cannot be held off-axis while the player is actually going somewhere.
-        bool dragging = mouse != null
-                        && mouse.leftButton.isPressed
-                        && speed <= lookCancelSpeed;
+        // Works at any speed, on purpose, changed 2026-08-30. It used to be blocked above
+        // walking pace so that driving always overruled the camera. That guard turned out to
+        // be the wrong one: the moment you most want to look is mid-run — at what is chasing
+        // you, or at what you just destroyed — and being able to look only while parked meant
+        // the feature may as well not exist.
+        //
+        // The design rule it was protecting still holds, because the OTHER two guards do the
+        // real work: the offset returns to zero on its own after lookReturnDelay, and it is an
+        // offset ON the live automatic rig rather than a replacement for it. You still cannot
+        // leave the camera somewhere useless and have to fix it mid-run — let go and it fixes
+        // itself.
+        bool dragging = mouse != null && mouse.leftButton.isPressed;
 
         if (dragging)
         {
