@@ -68,6 +68,13 @@ THEMES = {
         "ground": (0.60, 0.48, 0.33, 1.0),
         "rock": (0.52, 0.38, 0.26, 1.0),
     },
+    # Everest: high-altitude rock and old snow. Deliberately desaturated and cold --
+    # a blue-grey ground reads as shadowed snow under a pale sky, where a warm one
+    # reads as dust however steep the slope is.
+    "everest": {
+        "ground": (0.62, 0.65, 0.70, 1.0),
+        "rock": (0.31, 0.33, 0.38, 1.0),
+    },
 }
 
 
@@ -1144,11 +1151,16 @@ def render_preview(path, frames, args):
     # Roughly where ChaseCamera sits: behind and above the corridor, looking down it. At eye
     # height on the centreline the camera ends up inside whichever obstacle happens to be
     # there, which shows a grey slab and nothing else.
+    # Stand the camera on an EARLIER STATION rather than pushing it backwards horizontally.
+    # Backwards is also UPWARDS on a descent, and steeply so: on the 35-degree Everest course,
+    # 26 m back is 18 m higher, and a camera placed at a fixed height above a horizontal offset
+    # ends up buried inside the hillside. Using a station follows the terrain at any gradient.
     q = len(frames) // 4
-    _, q_tangent, _ = frames[q]
-    q_forward = Vector((q_tangent.x, q_tangent.y, 0.0)).normalized()
-    ahead = frames[min(len(frames) - 1, q + 70)][0]
-    shoot(quarter - q_forward * 26.0 + Vector((0.0, 0.0, 9.0)),
+    step = args.length / max(1, len(frames) - 1)
+    behind = frames[max(0, q - int(26.0 / step))][0]
+    ahead = frames[min(len(frames) - 1, q + int(140.0 / step))][0]
+
+    shoot(behind + Vector((0.0, 0.0, 9.0)),
           ahead + Vector((0.0, 0.0, 2.0)),
           root + "_road" + ext, lens=32.0)
 
