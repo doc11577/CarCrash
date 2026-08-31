@@ -69,6 +69,22 @@ public class CarDamage : MonoBehaviour
         [Tooltip("Wheel index in CarController, or -1 for a body panel.")]
         public int wheelIndex = -1;
 
+        [Tooltip("What KIND of part this is, for feats like \"lose every mirror\". Use the same " +
+                 "word on every car — \"mirror\", \"door\", \"bumper\" — or a feat that fires on " +
+                 "the E30 will do nothing on the P72.\n\n" +
+                 "Wheels need no group: a wheel is identified by having a Wheel Index, which is " +
+                 "a fact rather than a guess.")]
+        public string group = "";
+
+        /// <summary>
+        /// The part's kind, for feat matching. Falls back to "wheel" for anything with a wheel
+        /// index, since that is already an unambiguous fact and saves setting it by hand on
+        /// four parts per car.
+        /// </summary>
+        public string Group =>
+            !string.IsNullOrWhiteSpace(group) ? group.Trim().ToLowerInvariant()
+                                              : (wheelIndex >= 0 ? "wheel" : "");
+
         [HideInInspector] public bool detached;
         [HideInInspector] public float startingHealth;
 

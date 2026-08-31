@@ -62,6 +62,55 @@ public class RunScore : MonoBehaviour
              "and would triple-count the combo without this.")]
     public float comboRearmInterval = 0.2f;
 
+    /// <summary>
+    /// A named thing worth doing, that pays out once a run.
+    /// </summary>
+    /// <remarks>
+    /// Matched on a part's GROUP rather than its name. Names differ per car — the E30's mirrors
+    /// are `MIrrorL` and `MIrrorR`, the P72's will be something else — so a feat matched on
+    /// names would fire on one car and silently do nothing on the next, which is the worst kind
+    /// of failure because the feat simply never appears and nothing says why.
+    /// </remarks>
+    [Serializable]
+    public class Feat
+    {
+        [Tooltip("Stable id. Only used to make sure a feat pays once per run.")]
+        public string id = "boat";
+
+        [Tooltip("Shown on screen. Short and shouted works best.")]
+        public string title = "BOAT";
+
+        [Tooltip("One line under the title, or leave empty.")]
+        public string subtitle = "no wheels";
+
+        [Tooltip("Part group this counts, e.g. \"wheel\" or \"mirror\". Leave EMPTY to count " +
+                 "every part on the car, which is how you write a \"lose 8 parts\" feat.")]
+        public string group = "wheel";
+
+        [Tooltip("How many must be gone. 0 means ALL of them, which is usually what you want — " +
+                 "it keeps working if a car has three mirrors or five wheels.")]
+        public int required = 0;
+
+        [Tooltip("Bonus gears. For scale: a solid wall hit is about 14, and a whole run is " +
+                 "roughly 200.")]
+        public int bonus = 300;
+
+        public Color colour = new Color(0.35f, 0.85f, 1f);
+    }
+
+    [Header("Feats")]
+    [Tooltip("Named bonuses for doing something particular. Each pays once per run.")]
+    public Feat[] feats =
+    {
+        new Feat { id = "boat", title = "BOAT", subtitle = "no wheels",
+                   group = "wheel", required = 0, bonus = 300,
+                   colour = new Color(0.35f, 0.85f, 1f) },
+
+        new Feat { id = "mirrors", title = "MIRROR MIRROR", subtitle = "both mirrors gone",
+                   group = "mirror", required = 0, bonus = 120,
+                   colour = new Color(0.80f, 0.55f, 1f) },
+    };
+
     [Header("Feedback")]
     [Tooltip("Impacts worth fewer gears than this raise no popup. Stops kerbs and scrapes " +
              "filling the screen with +0.")]
@@ -81,7 +130,7 @@ public class RunScore : MonoBehaviour
         comboWindow <= 0f ? 0f : Mathf.Clamp01((comboExpiresAt - Time.time) / comboWindow);
 
     /// <summary>Raised when something is worth showing on screen: text, and where it happened.</summary>
-    public event Action<string, Vector3> Scored;
+    public event Action<string, Vector3, Color, bool> Scored;
 
     [Header("Read-only — watch these in play mode")]
     [Tooltip("Cars currently being scored. 0 means NOTHING can score — the player's car has no " +
@@ -102,11 +151,16 @@ public class RunScore : MonoBehaviour
     [Tooltip("Live combo multiplier.")]
     [SerializeField] float multiplierReadout;
 
+    [Tooltip("Feats earned this run. Stuck at 0 after losing every wheel means the parts have " +
+             "no matching Group, or the mirrors are not tagged.")]
+    [SerializeField] int featsEarned;
+
     float comboExpiresAt;
     float comboRearmAt;
     bool banked;
 
     readonly List<CarDamage> scoring = new List<CarDamage>();
+    readonly HashSet<string> earnedFeats = new HashSet<string>();
 
     void Awake()
     {
@@ -189,7 +243,7 @@ public class RunScore : MonoBehaviour
         comboExpiresAt = Time.time + comboWindow;
 
         int worth = Mathf.RoundToInt(gained);
-        if (worth >= minPopupGears) Scored?.Invoke("+" + worth, point);
+        if (worth >= minPopupGears) Scored?.Invoke("+" + worth, point, Color.white, false);
 
         if (Time.time < comboRearmAt) return;
         comboRearmAt = Time.time + comboRearmInterval;
@@ -210,7 +264,63 @@ public class RunScore : MonoBehaviour
         // rather than a point on the car. That is the right place for the popup — it tracks
         // the thing the player is actually watching leave.
         Vector3 at = part.visual != null ? part.visual.position : transform.position;
-        Scored?.Invoke(part.Label + "  +" + bonus, at);
+        Scored?.Invoke(part.Label + "  +" + bonus, at, Color.white, false);
+
+        CheckFeats(at);
+    }
+
+    /// <summary>
+    /// Pay out any feat the player has just completed.
+    /// </summary>
+    /// <remarks>
+    /// Evaluated against the PLAYER's car only, and always from scratch rather than from the
+    /// part that was just lost. That is what makes it correct when traffic is registered for
+    /// scoring too: a traffic car shedding its fourth wheel does not change the player's parts,
+    /// so nothing fires, and this never has to work out which car an event came from.
+    /// </remarks>
+    void CheckFeats(Vector3 at)
+    {
+        if (feats == null || feats.Length == 0) return;
+        if (PlayerCar.Current == null) return;
+
+        CarDamage car = PlayerCar.Current.Damage;
+        if (car == null || car.parts == null) return;
+
+        foreach (Feat feat in feats)
+        {
+            if (feat == null || earnedFeats.Contains(feat.id)) continue;
+
+            string group = (feat.group ?? "").Trim().ToLowerInvariant();
+            int total = 0;
+            int lost = 0;
+
+            foreach (CarDamage.Part part in car.parts)
+            {
+                if (part == null) continue;
+                if (group.Length > 0 && part.Group != group) continue;
+
+                total++;
+                if (part.detached) lost++;
+            }
+
+            // A feat whose group matches nothing on this car must never fire. Without this,
+            // "all mirrors gone" is vacuously true on a car with no mirrors and pays out the
+            // instant anything at all falls off.
+            if (total == 0) continue;
+
+            int needed = feat.required > 0 ? Mathf.Min(feat.required, total) : total;
+            if (lost < needed) continue;
+
+            earnedFeats.Add(feat.id);
+            Score += feat.bonus;
+            featsEarned = earnedFeats.Count;
+
+            string text = string.IsNullOrWhiteSpace(feat.subtitle)
+                ? $"{feat.title}   +{feat.bonus}"
+                : $"{feat.title}   +{feat.bonus}\n{feat.subtitle}";
+
+            Scored?.Invoke(text, at, feat.colour, true);
+        }
     }
 
     /// <summary>

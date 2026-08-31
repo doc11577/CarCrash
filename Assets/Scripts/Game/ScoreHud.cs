@@ -85,6 +85,7 @@ public class ScoreHud : MonoBehaviour
         public Vector3 world;
         public float bornAt;
         public bool live;
+        public float life;
 
         /// <summary>Mirrors text.enabled, so the per-frame loop only touches it on a change.</summary>
         public bool shown;
@@ -350,14 +351,15 @@ public class ScoreHud : MonoBehaviour
             if (!floaters[i].live) continue;
 
             float age = now - floaters[i].bornAt;
-            if (age >= popupLife)
+            float life = floaters[i].life > 0f ? floaters[i].life : popupLife;
+            if (age >= life)
             {
                 floaters[i].live = false;
                 Show(i, false);
                 continue;
             }
 
-            float t = age / popupLife;
+            float t = age / life;
 
             // Rise in WORLD space, so the popup stays pinned to the spot on the road where
             // the hit happened while the camera keeps moving past it.
@@ -396,7 +398,7 @@ public class ScoreHud : MonoBehaviour
         floaters[index].text.enabled = visible;
     }
 
-    void OnScored(string text, Vector3 world)
+    void OnScored(string text, Vector3 world, Color colour, bool major)
     {
         if (floaters == null || floaters.Length == 0) return;
 
@@ -408,6 +410,12 @@ public class ScoreHud : MonoBehaviour
         floaters[slot].bornAt = Time.unscaledTime;
         floaters[slot].live = true;
         floaters[slot].text.text = text;
+        floaters[slot].text.color = colour;
+
+        // A feat is a bigger deal than a "+14", so it is bigger and stays longer. Sharing one
+        // life and size would let the thing worth noticing vanish alongside the routine ones.
+        floaters[slot].text.fontSize = major ? popupSize * 1.7f : popupSize;
+        floaters[slot].life = major ? popupLife * 2.4f : popupLife;
         floaters[slot].text.alpha = 1f;
         Show(slot, true);
     }
