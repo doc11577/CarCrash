@@ -302,6 +302,108 @@ def split_loose(objs):
     return out
 
 
+def find_wheels_by_shape(objs, min_diameter=0.30, max_diameter=1.30):
+    """Recover wheels from a welded car with no wheel-shaped NAMES, by looking at geometry.
+
+    Most free car models are one welded mesh with one material -- the De Tomaso P72 arrives as
+    a single object called `s_0070`, so every name and material test finds nothing and the car
+    ends up with no wheels at all. The parts are still THERE, just anonymous.
+
+    Splitting into disconnected islands recovers them, because a wheel is never welded to the
+    bodywork even when it shares an object with it. A wheel is then identifiable by shape
+    alone: a disc, meaning two similar large dimensions and one much smaller, at a plausible
+    road-wheel size.
+
+    Deliberately shape-based and not position-based. Corners are only meaningful once the
+    model's axes are known, and the axes are derived from the body -- which is what this runs
+    before. Shape needs no frame of reference.
+
+    Returns (wheels, remaining), both lists of objects. `remaining` is every island that is
+    not part of a wheel and still has to be rejoined into the body.
+    """
+    islands = split_loose(objs)
+
+    # Straight after mesh.separate, ob.dimensions is STALE until the depsgraph re-evaluates,
+    # so every island reports the size of the object it was cut from and no shape test can
+    # work. Measuring the bounding box in world space avoids depending on that entirely.
+    def world_dims(ob):
+        pts = [ob.matrix_world @ Vector(c) for c in ob.bound_box]
+        lo = Vector((min(p[i] for p in pts) for i in range(3)))
+        hi = Vector((max(p[i] for p in pts) for i in range(3)))
+        return hi - lo
+
+    discs = []
+    for ob in islands:
+        d = sorted(world_dims(ob))
+        thin, mid, wide = d[0], d[1], d[2]
+
+        if wide < min_diameter or wide > max_diameter:
+            continue
+        if thin <= 1e-6 or wide / thin < 1.8:
+            continue          # a box, not a disc
+        if mid / wide < 0.82:
+            continue          # an oval or a fin, not a wheel
+
+        discs.append((wide, ob))
+
+    if len(discs) < 3:
+        return [], islands
+
+    # Pick the largest MATCHED SET, not the largest disc.
+    #
+    # Picking the biggest disc does not work, and the P72 shows exactly why: a body panel
+    # measuring 0.31 x 0.78 x 0.85 passes the disc test and is larger than the 0.68 wheels, so
+    # it becomes the reference and excludes them. Size alone cannot tell a wheel from a curved
+    # panel that happens to be disc-shaped.
+    #
+    # What IS distinctive is repetition. Wheels are the only thing on a car that appears four
+    # times at an identical size. Grouping by diameter and requiring at least three members
+    # rejects every one-off panel without needing to know what a wheel looks like.
+    discs.sort(key=lambda pair: -pair[0])
+
+    groups = []
+    for wide, ob in discs:
+        for group in groups:
+            if abs(group[0][0] - wide) <= group[0][0] * 0.08:
+                group.append((wide, ob))
+                break
+        else:
+            groups.append([(wide, ob)])
+
+    matched = [g for g in groups if len(g) >= 3]
+    if not matched:
+        return [], islands
+
+    # Largest diameter among the sets that repeat: brake discs and hub caps also come in
+    # fours, and they are always smaller than the wheel they sit inside.
+    matched.sort(key=lambda g: -g[0][0])
+    biggest = matched[0][0][0]
+    wheels = [ob for wide, ob in matched[0]]
+
+    # Absorb whatever sits inside each wheel: brake disc, caliper, hub. These are separate
+    # islands at the same centre, and a wheel that leaves its own brake disc behind on the
+    # car looks like a bug the moment it detaches.
+    centres = [(world_centre(w), biggest * 0.55) for w in wheels]
+    claimed = set(w.name for w in wheels)
+
+    for ob in islands:
+        if ob.name in claimed:
+            continue
+        centre = world_centre(ob)
+        for wheel_centre, reach in centres:
+            if (centre - wheel_centre).length <= reach:
+                wheels.append(ob)
+                claimed.add(ob.name)
+                break
+
+    remaining = [ob for ob in islands if ob.name not in claimed]
+
+    print("  wheels found by SHAPE: %d island(s), %.2f m diameter "
+          "(the model had no wheel-shaped names)" % (len(wheels), biggest))
+
+    return wheels, remaining
+
+
 def group_wheels(wheels, body, axes):
     """Join each corner's parts into one object, origin at the wheel centre, named by corner.
 
@@ -691,6 +793,14 @@ def main():
             wheels.append(ob)
         else:
             bodies.append(ob)
+
+    # Nothing matched by name. Either the model has no wheels, or -- far more likely, since
+    # most free car models are one welded mesh -- it has them under a name that says nothing.
+    if not wheels and bodies:
+        wheels, bodies = find_wheels_by_shape(bodies)
+        if not wheels:
+            print("  !! no wheels by name OR by shape. The car will have no wheels: check "
+                  "WHEEL_TOKENS, or whether this model has separate wheel geometry at all.")
 
     print("  classified: %d body, %d wheel, %d dropped" % (
         len(bodies), len(wheels), len(dropped)))

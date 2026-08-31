@@ -144,3 +144,34 @@ Two rejected candidates, recorded so they are not tried again:
   high enough that tiling would be obvious over a 1,800 m course.
 - `rock_boulder_dry` — tiles beautifully but is washed out and structureless. It reads as a
   smooth boulder rather than a cut rock face, which is wrong next to flat-shaded terraced walls.
+
+---
+
+## Low Poly Car — De Tomaso P72 2020
+
+- **Author:** ROH3D — the same author as the E30 above
+- **Source:** https://sketchfab.com/3d-models/low-poly-car-de-tomaso-p72-2020-ab85c302e652492196b600ee1eb7106a
+- **License:** [CC Attribution 4.0](https://creativecommons.org/licenses/by/4.0/)
+- **Attribution required:** **YES.** Credit "De Tomaso P72 by ROH3D (CC-BY)" in-game, on the
+  car select screen alongside the E30.
+- **Location:** `Assets/Art/Vehicles/DeTomasoP72/`
+- **Retrieved:** 2026-08-30
+
+Measured, not quoted: 21,496 tris / 12,173 verts as downloaded, in **millimetres**
+(4,738 mm long, against the real car's 4,566) so it needs `--scale 0.001`.
+
+**One welded mesh, one material.** The whole car is a single object `s_0070` with material
+`Standard32B531` — no separate wheels and, unlike the E30, **no separate `Glass` material**.
+Two consequences:
+
+- Wheels had to be recovered geometrically. See `find_wheels_by_shape` in `split_car.py`.
+- **`CarGlass` cannot work on this car.** It empties submeshes whose material name starts with
+  `Glass`, and there is no such material to empty. The windows are part of the body texture.
+  Either leave the component off this car, or split the glass by hand in Blender first.
+
+Textures are **44 MB** as downloaded, dominated by a 26.7 MB normal map. Not yet imported. Follow
+the E30 precedent: base colour only, reduced to 1024², with normal, metallic and roughness
+dropped entirely.
+
+`p72-split.fbx` is derived from `Source/FullBody.obj` by `tools/blender/split_car.py`.
+CC-BY permits modification provided attribution is kept.
