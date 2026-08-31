@@ -39,7 +39,7 @@ from mathutils import Vector
 # (length, width, height) space where length runs nose->tail, width runs
 # left->right, and height runs floor->roof. A face is claimed by the FIRST
 # region that contains it, so order matters.
-REGIONS = [
+SEDAN_REGIONS = [
     # name           length        width         height        hinge
     # Mirrors first: they sit inside the door region and must claim their
     # faces before the door test runs.
@@ -59,6 +59,36 @@ REGIONS = [
     ("PartDoorL",   (0.34, 0.64), (0.00, 0.34), (0.16, 0.72), "front", True),
     ("PartDoorR",   (0.34, 0.64), (0.66, 1.00), (0.16, 0.72), "front", True),
 ]
+
+# A mid-engine supercar is a different animal and the saloon numbers carve nonsense out of it.
+# Tried on the De Tomaso P72 2026-08-30: the saloon door region took the sill and the side
+# intake instead of the door, and the boot region sat behind the engine cover.
+#
+# What actually differs:
+#   * The engine is AHEAD of the rear axle, so the opening cover sits further forward than a
+#     boot lid and is much longer.
+#   * The front lid covers luggage, is short, and is low and narrow.
+#   * The whole car is lower, so every height band moves UP as a fraction of a shorter body.
+#   * The doors are shorter along the length and sit higher above a deep sill.
+MIDENGINE_REGIONS = [
+    ("PartMirrorL", (0.28, 0.44), (0.00, 0.07), (0.45, 0.80), "inner", False),
+    ("PartMirrorR", (0.28, 0.44), (0.93, 1.00), (0.45, 0.80), "inner", False),
+    # Height cap is higher than the saloon's 0.45 because the car is only a metre tall, so
+    # the same absolute nose height is a bigger fraction of it.
+    ("PartBumperF", (0.00, 0.11), (0.00, 1.00), (0.00, 0.58), "none",  False),
+    ("PartBumperR", (0.88, 1.00), (0.00, 1.00), (0.00, 0.58), "none",  False),
+    ("PartHood",    (0.11, 0.29), (0.14, 0.86), (0.34, 1.00), "rear",  False),
+    ("PartTrunk",   (0.60, 0.87), (0.14, 0.86), (0.44, 1.00), "front", False),
+    # Lifted off the sill: at the saloon's 0.16 floor this took the rocker panel and the side
+    # intake, which is what made the door read as a jagged blob rather than a door.
+    ("PartDoorL",   (0.33, 0.58), (0.00, 0.30), (0.30, 0.82), "front", True),
+    ("PartDoorR",   (0.33, 0.58), (0.70, 1.00), (0.30, 0.82), "front", True),
+]
+
+REGION_PROFILES = {
+    "sedan": SEDAN_REGIONS,
+    "midengine": MIDENGINE_REGIONS,
+}
 
 # Material names containing any of these are glass. Only regions with allow_glass may
 # claim such a face. Without this the trunk region takes the rear WINDSCREEN instead of
@@ -115,6 +145,11 @@ def parse_args():
                         "in millimetres, which most 3ds Max OBJ exports are.")
     p.add_argument("--no-shell", action="store_true",
                    help="skip the dark interior shell")
+    p.add_argument("--profile", default="sedan", choices=sorted(REGION_PROFILES),
+                   help="Panel region set. `sedan` is tuned for a boxy three-box car (the E30); "
+                        "`midengine` for a low supercar with the engine ahead of the rear axle "
+                        "(the P72). Using the wrong one carves jagged nonsense, so look at the "
+                        "preview render before believing the triangle report.")
     p.add_argument("--keep-interior", action="store_true",
                    help="do not drop interior meshes")
     return p.parse_args(argv_after_dashes())
@@ -831,8 +866,9 @@ def main():
 
     # Bounds are captured once, from the intact body, and reused for every region. Letting
     # them shift as faces are removed would move every later region's frame of reference.
-    print("  --- carving protruding parts ---")
-    for region in REGIONS:
+    regions = REGION_PROFILES[args.profile]
+    print("  --- carving protruding parts --- (profile: %s)" % args.profile)
+    for region in regions:
         if region[0] in PRE_SHELL_PARTS:
             carve(body, region, axes, lo, hi)
 
@@ -841,7 +877,7 @@ def main():
         shell = build_interior_shell(body, max(400, int(args.tris * 0.08)))
 
     print("  --- carving panels ---")
-    for region in REGIONS:
+    for region in regions:
         if region[0] not in PRE_SHELL_PARTS:
             carve(body, region, axes, lo, hi)
 

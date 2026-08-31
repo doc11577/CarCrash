@@ -169,9 +169,9 @@ Two consequences:
   `Glass`, and there is no such material to empty. The windows are part of the body texture.
   Either leave the component off this car, or split the glass by hand in Blender first.
 
-Textures are **44 MB** as downloaded, dominated by a 26.7 MB normal map. Not yet imported. Follow
-the E30 precedent: base colour only, reduced to 1024², with normal, metallic and roughness
-dropped entirely.
+Textures were **44 MB** as downloaded, dominated by a 26.7 MB normal map. Reduced to a single
+**1.9 MB `p72_body.png`** — base colour only, 4096² down to 1024², with normal, metallic and
+roughness dropped entirely, following the E30 precedent.
 
 `p72-split.fbx` is derived from `Source/FullBody.obj` by `tools/blender/split_car.py`.
 CC-BY permits modification provided attribution is kept.
