@@ -92,10 +92,11 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "blind to anything closer — which is why they drove into rocks.")]
     [Range(0, 6)] public int hazardSamples = 4;
 
-    [Tooltip("Metres of rise above the car's own ground before something counts as an obstacle " +
-             "rather than a bump. Raise it to make them attack kickers again; lower it to make " +
+    [Tooltip("Metres something must stick OUT OF THE HILLSIDE to count as an obstacle rather " +
+             "than a bump. Measured against the local slope, not against the car, so a descent " +
+             "cannot hide it. Raise it to make them attack kickers again; lower it to make " +
              "them fussier about anything raised.")]
-    public float hazardHeight = 1.1f;
+    public float hazardHeight = 0.8f;
 
     [Tooltip("How much a blocked path counts against a direction, against metres of descent " +
              "gained. Too low and they drive through rocks to reach a better line; too high and " +
@@ -171,6 +172,11 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     [SerializeField] float slipReadout;
     [SerializeField] float wrongWayReadout;
     [SerializeField] bool turningAroundReadout;
+
+    [Tooltip("How blocked the chosen direction is. Sitting at 0 while driving past rocks means " +
+             "the hazard test is not seeing obstacles at all — which is exactly what a wrong " +
+             "baseline looks like, and it looked like nothing else.")]
+    [SerializeField] float hazardReadout;
 
     CarController car;
     Rigidbody body;
@@ -256,6 +262,7 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         int best = 0;
         float bestScore = float.NegativeInfinity;
         float bestDrop = 0f;
+        float bestHazard = 0f;
 
         for (int i = 0; i < probes; i++)
         {
@@ -267,11 +274,13 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
             // rather than the best, or cars would dive off the outside of the map.
             float drop = float.IsNegativeInfinity(there) ? -1000f : here - there;
 
-            scores[i] = drop - Hazard(dir, here, reach) * hazardWeight
+            float blocked = Hazard(dir, here, there, reach);
+            scores[i] = drop - blocked * hazardWeight
                              - Mathf.Abs(angle) * bias;
 
             if (scores[i] <= bestScore) continue;
             bestScore = scores[i];
+            bestHazard = blocked;
             bestDrop = drop;
             best = i;
         }
@@ -281,6 +290,7 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
 
         chosenAngle = bestAngle;
         bestDropReadout = bestDrop;
+        hazardReadout = bestHazard;
         chosenAngleReadout = bestAngle;
     }
 
@@ -303,9 +313,10 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     /// deliberate trade: a car that keeps its wheels on the ground is worth more than one that
     /// takes every jump and spins. Raise `hazardHeight` if they should attack the ramps again.
     /// </remarks>
-    float Hazard(Vector3 dir, float here, float reach)
+    float Hazard(Vector3 dir, float here, float far, float reach)
     {
         float worst = 0f;
+        bool sloped = !float.IsNegativeInfinity(far);
 
         for (int s = 1; s <= hazardSamples; s++)
         {
@@ -320,7 +331,19 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
                 continue;
             }
 
-            float rise = h - here;
+            // MEASURED AGAINST THE SLOPE, NOT AGAINST THE CAR. This is the whole trick, and
+            // getting it wrong is why they drove into rocks without flinching.
+            //
+            // Comparing a sample to the ground under the car only works on the flat. On a 15%
+            // descent the ground 20 m ahead is already 3 m lower, so a 1.5 m boulder there
+            // reads as 1.5 m BELOW the car and registers as nothing at all — it would have to
+            // be over 4 m tall to trip a 1.1 m threshold. The hill hid every obstacle on it.
+            //
+            // The baseline is where the ground would be if the slope ran straight from here to
+            // the far sample, so what is measured is how far something sticks out of the
+            // hillside rather than how high it is relative to a car that is above it anyway.
+            float baseline = sloped ? Mathf.Lerp(here, far, f) : here;
+            float rise = h - baseline;
             if (rise <= hazardHeight) continue;
 
             // Closer is worse: the same rock is a nuisance at 35 m and unavoidable at 4 m.
