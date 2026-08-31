@@ -103,6 +103,37 @@ Non-obvious things that will bite:
 
 - **Pin jsDelivr to a commit hash, never a branch.** Branch URLs are cached hard and will
   serve a stale build for hours.
+
+- **THE HASH IS THE STEP THAT GETS MISSED, AND IT FAILS SILENTLY.** Pinning is correct, but it
+  means `BUILD_BASE` must be edited on *every* release. Happened 2026-08-30: a full build was
+  made and published, the Google Sites page still served the 2026-08-27 smoke test, and nothing
+  anywhere reported an error — the old build loads perfectly, it is just the wrong game.
+
+  **If the page shows an old build, check `BUILD_BASE` before checking anything else.** The
+  giveaway is that it loads fine and looks like an earlier version, rather than failing.
+  Diagnose from the repo rather than the browser:
+
+  ```bash
+  grep -A2 "var BUILD_BASE" tools/embed.html   # which commit is the page pinned to?
+  ls -l prod/                                  # are these files actually new?
+  ls -l WebBuild/carcrash/Build/               # did Unity write a build at all?
+  ```
+
+  All three timestamps must be from this build. `publish.sh` will happily copy a stale build
+  without complaint, because copying is all it does.
+
+- **Verify jsDelivr has the commit before pasting into Sites.** It can only serve what is on
+  GitHub, so a hash taken before `git push` points at a commit the CDN cannot fetch:
+
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}\n" -r 0-0 \
+    "https://cdn.jsdelivr.net/gh/doc11577/CarCrash@<hash>/prod/carcrash.loader.js"
+  ```
+
+  200 or 206 means it is live. 404 means push first.
+
+- **`git push` cannot be run for you.** The credential helper is Git Credential Manager, which
+  needs a GUI prompt and hangs forever in a non-interactive shell. Ethan runs the push.
 - **Decompression Fallback must stay ON.** jsDelivr can't send `Content-Encoding: br`, so
   Unity has to decompress in JS. Output named `.unityweb` = fallback on. `.br` = it's off
   and the game will hang forever at 0%.
@@ -116,18 +147,32 @@ is a generic CDN that filters don't block. There is no trick beyond that.
 
 **Test the full pipeline on a real school Chromebook before building anything worth losing.**
 
-### Build baseline (smoke test, 2026-08-27)
+### Build size — measured 2026-08-30
 
-Brotli, ~10.4 MB total download:
+Brotli, **14.96 MB** total download. Commit `f87f071`, the first real build: scoring, Quarry01,
+traffic AI, the front end, the garage, dev mode and fullscreen.
 
-| File | Compressed | Raw |
-| --- | --- | --- |
-| `carcrash.wasm.unityweb` | 6.49 MB | 34.79 MB |
-| `carcrash.data.unityweb` | 3.71 MB | 9.24 MB |
-| `carcrash.framework.js.unityweb` | 0.07 MB | 0.32 MB |
-| `carcrash.loader.js` | 0.11 MB | — |
+| File | 2026-08-30 | Smoke test 2026-08-27 | Change |
+| --- | --- | --- | --- |
+| `carcrash.data.unityweb` | **8.15 MB** | 3.71 MB | **+120%** |
+| `carcrash.wasm.unityweb` | 6.63 MB | 6.49 MB | +2% |
+| `carcrash.framework.js.unityweb` | 0.07 MB | 0.07 MB | — |
+| `carcrash.loader.js` | 0.11 MB | 0.11 MB | — |
+| **Total** | **14.96 MB** | 10.4 MB | **+44%** |
 
-Reference game for comparison: ~14.7 MB. Watch for regressions against this table.
+Reference game for comparison: ~14.7 MB. Largest single file is 8.15 MB against jsDelivr's
+**20 MB per-file cap**, so there is headroom — but watch `carcrash.data.unityweb`, which is where
+all content growth lands.
+
+**The data file more than doubled**, and that is the whole story of this build: a 100k-triangle
+course, a second car, two 1K textures and the TMP font atlas. Code barely moved. The two cheapest
+reductions when it next matters, in order:
+
+1. **A trimmed TMP font asset.** The stock `LiberationSans SDF` is 2.2 MB and force-included from
+   a `Resources/` folder; the game draws digits, a few words and some part names. Font Asset
+   Creator with a custom character set gives roughly 100 KB.
+2. **`--mountain-cell 24`** on the course generator. The mountainsides are the bulk of the
+   geometry and are seen only at distance.
 
 ### Web player settings (verified on disk)
 
@@ -142,11 +187,11 @@ off — threads need COOP/COEP headers Google Sites will never send), `webGLData
 Untested lever if the Chromebook is slow: capping `devicePixelRatio` to 1. HiDPI Chromebooks
 render far more pixels than the GPU can afford. Measure before reaching for it.
 
-## NEXT SESSION — pick up here (updated 2026-08-30, late)
+## NEXT SESSION — pick up here (updated 2026-08-30, shipped)
 
-The E30 drives, scoring counts, Quarry01 is built and textured, the front end exists and three AI
-cars race the hill. Everything in the old step-by-step wiring block is done and deleted; what
-follows is only what is still open.
+The game is BUILT AND LIVE on Google Sites (commit `f87f071`, 14.96 MB). The E30 and the P72
+drive, scoring counts, Quarry01 is textured, three AI cars race the hill, and the garage sells
+cars for gears. What follows is only what is still open.
 
 ### State on disk
 
@@ -298,23 +343,26 @@ Build order — expensive unknowns first, content last:
    **scoring wired and counting** (gears · combo · HUD · wallet · `PlayerCar` self-registration) ·
    **Quarry01 built, textured and driven** (generator · kickers · bays · mountainsides · CC0 textures) ·
    **traffic AI racing the hill** (descent-seeking · obstacle avoidance · destructible · painted)
-2. **Now** — **ram a wall and confirm panels and wheels detach** (the oldest unverified thing) ·
-   re-tune damage and scoring now traffic
-   exists · rebuild and re-measure download size ·
-   **get a real frame-rate number off a school Chromebook — this is now overdue.** The scene has
-   gained a 100k-triangle course, three extra rigidbodies with suspension, two 1K textures and a
-   TMP font atlas since the last size baseline, and every performance claim about all of it is
-   reasoning rather than measurement. In-game CC-BY attribution is **done** — it is on the car
-   select screen.
-3. **Next** — the agreed order (scoring → first real map → menu → traffic) is **built end to end
-   as of 2026-08-30**. Scoring counts, Quarry01 drives and is textured, the menu works, and
-   three AI cars race the hill. What is left on it:
-   - **The garage.** Car select exists but nothing is bought, and `PlayerWallet.Spend` has no
-     caller. This is the link that closes the loop: crash, earn gears, buy a car, race again.
-   - **Re-tune the scoring numbers now that traffic exists**, and decide whether hitting traffic
-     should pay (`TrafficSpawner.scoreTrafficDamage`, currently off).
-   - **Rebuild and re-measure the download**, which has not been done since TMP essentials,
-     two 1K textures and a 100k-triangle course were added.
+   · **the front end** (menu · map select · garage · TAB pause · fullscreen)
+   · **the garage** (buy cars with gears · roster asset · spawned player car)
+   · **dev mode** · **shipped to Google Sites, 14.96 MB, commit `f87f071`**
+
+2. **Now — THE CHROMEBOOK FRAME RATE.** It is the last unmeasured thing in the project and it is
+   overdue: the scene has gained a 100k-triangle course, four cars with suspension, two 1K
+   textures and a font atlas, and **every performance claim about all of it is reasoning rather
+   than measurement.** Read it off the live build — Options, the dev code, readout top-left.
+   Nothing else on this list is worth doing until that number exists, because it is the only
+   thing that can invalidate work already done.
+
+3. **Next** — in rough order:
+   - **Re-tune damage and scoring now traffic exists**, and decide whether hitting traffic should
+     pay (`TrafficSpawner.scoreTrafficDamage`, currently off). Also sanity-check the 50,000 price
+     against a real run: at ~200 gears a run that is 250 runs.
+   - **A second map.** The generator makes this cheap — `--theme jungle`, a different `--seed`,
+     a different length. This is the highest content-per-effort item in the project.
+   - **Trim the TMP font asset** if the download needs to come down. 2.2 MB to ~100 KB.
+   - **Panel seams on the P72.** Region boxes cut straight lines through a curved body; fixing
+     it properly needs carving that snaps to edge loops.
 4. **Later** — split-screen 2P · juice · audio · more content · ship pass
 
 ### Architecture calls already made
@@ -463,7 +511,11 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 | `Menu/UiKit.cs` | Canvas, button and label builders shared by the menu and the pause screen. |
 | `Game/PauseMenu.cs` | TAB pauses. Resume and return to menu. |
 | `Game/GameSelection.cs` | Chosen map and car, by string id, in PlayerPrefs. |
-| `Debug/PerfReadout.cs` | On-screen FPS/device readout. **Delete before shipping.** |
+| `Game/CarRoster.cs` | ScriptableObject: every car, its price and prefab. Shared by menu and spawner. |
+| `Game/PlayerCarSpawner.cs` | Spawns the car the player owns and selected. |
+| `Game/DevMode.cs` | Code-gated dev mode: gears, car tuner, perf readout. |
+| `Menu/Fullscreen.cs` | Fullscreen toggle. The reliable control is in `tools/embed.html`. |
+| `Debug/PerfReadout.cs` | On-screen FPS/device readout. Only drawn in dev mode. |
 
 ### Changing a default in C# does NOT change a component already in the scene
 
@@ -523,8 +575,14 @@ That is the intended behaviour. The cost is that a low wall lets the nose clip i
 - **Part anchors** `PartHood`, `PartBumperF/R`, `PartDoorL/R`. Wheel anchors double as
   the wheel part anchors.
 - **GameManager** — `RunRestart`, `DebrisPool`, `RunScore` (Player Car empty — the car finds it),
-  `ScoreHud`, `PauseMenu`, `TrafficSpawner` (+ a child `TrafficGrid` empty marking the grid).
-- **Main Camera** — `ChaseCamera` (target = Car), `PerfReadout`.
+  `ScoreHud`, `PauseMenu`, `TrafficSpawner` (+ a child `TrafficGrid`), `PlayerCarSpawner`
+  (Roster = the CarRoster asset, Spawn Point = `PlayerSpawn`).
+- **PlayerSpawn** — an empty marking where the player car appears. Just a marker: putting a
+  second `PlayerCarSpawner` on it is what caused two cars to spawn.
+- The player car is **NOT in the scene**. It is a prefab, spawned from the roster.
+- **Main Camera** — `ChaseCamera` and `PerfReadout`, both with their car reference left **empty**:
+  they find the spawned car through `PlayerCar.Current`. A stale reference to a deleted object
+  beats the fallback and gives you a camera following nothing.
 - **TrafficCar prefab** (`Assets/Art/Vehicles/`) — a copy of `Car` with **`PlayerCar` and
   `CarInput` removed** and `TrafficDriver` + `CarPaint` added. Not in the scene; `TrafficSpawner`
   instantiates it. See the traffic section for why `PlayerCar` must be absent rather than stripped.
@@ -533,7 +591,8 @@ That is the intended behaviour. The cost is that a low wall lets the nose clip i
 
 - **Main Camera** — the default one. A Screen Space Overlay canvas draws without a camera, but
   Unity complains and the Game view goes black otherwise.
-- **Menu** — an empty GameObject with `MenuUI`. It builds its own canvas, pages and EventSystem.
+- **Menu** — an empty GameObject with `MenuUI` (Roster = the CarRoster asset). It builds its own
+  canvas, pages and EventSystem.
 
 **Both scenes must be in File > Build Profiles > Scene List.** `LoadSceneAsync` returns null for
 an unlisted scene, which is the single most likely reason the front end does nothing.
@@ -1211,6 +1270,66 @@ which is the worst kind of bug: `42 / 2` gives a radial step of exactly 2 so the
 up perfectly, while `55 / 2` rounds to 28 rings and a step of **1.964**, putting every vertex along
 the finish bowl's mouth between two chunk columns — a T-junction and a hairline crack at each one.
 The report prints the snapped radius alongside the requested one so the difference is visible.
+
+### Garage, dev mode and fullscreen — built 2026-08-30
+
+**The loop closes here.** Damage earns gears, gears buy cars, the car you bought is the one that
+spawns. The E30 is the free starter; the De Tomaso P72 costs 50,000.
+
+- **`CarRoster` is a ScriptableObject asset, not a list on a component.** Two scenes need the
+  roster — the menu shows it, the run spawns from it — and two separate lists would drift
+  silently: you buy one car and a different one appears on the grid.
+- **`PlayerCarSpawner` replaced the scene-placed car.** A car placed in the scene is one car
+  forever, which is precisely the thing a garage is not. It spawns in `Awake` so the car exists
+  before anything's `Start` runs, since `RunScore.Start` reads `PlayerCar.Current`.
+- **`ChaseCamera` and `PerfReadout` acquire the car LAZILY**, not in `Awake`. The car is spawned
+  now, so at Awake there may be nothing to follow, and a camera that gave up once would follow
+  nothing for the whole run. `CLAUDE.md` predicted both would break the moment a car was spawned
+  rather than placed; both would have.
+- **Ownership is stored by id, never by index**, so reordering the roster cannot hand the player
+  a different car. Starter cars are not written to prefs at all — owned by definition, and
+  storing them would mean one could be lost by clearing prefs.
+- The garage has **one action button that changes meaning** rather than a BUY and a GO with one
+  always dead, and it says how many gears short you are instead of doing nothing, because a dead
+  button reads as a bug.
+
+**Two `PlayerCarSpawner`s spawn two cars, and `[DisallowMultipleComponent]` does not stop it.**
+That attribute only prevents two copies on ONE object; the natural mistake is one on the manager
+and another on the spawn point, which is exactly what happened. Two `PlayerCar`s then fight over
+`PlayerCar.Current` and the camera follows whichever won. There is now a static guard that stands
+the second one down and names both objects in the error.
+
+#### Dev mode
+
+Unlocked with a code on the menu's Options screen. Grants **1,000,000 gears rather than infinite**,
+deliberately: the garage, the wallet and the purchase path all still run their real code, whereas
+an "everything is free" flag would mean the buying path is never exercised until a player without
+dev mode hits it.
+
+It is **a convenience, not a security boundary** — the code ships in the build and the PlayerPrefs
+key can be set from devtools. That is fine; there is no leaderboard and nothing to cheat anyone
+out of. It exists because the target device is a Chromebook running a Web build with no Inspector
+and no console.
+
+Dev mode also gates the **pause-screen car tuner** (top speed, power, grip, downforce, spring,
+damper, anti-roll, steer angle) and the **`PerfReadout`**, which otherwise has no business in the
+corner of a shipped build. Tuner changes apply on resume and are **not persisted** — a restart
+restores the prefab, which is what makes experimenting safe.
+
+#### Fullscreen has two controls, and the reliable one is in the HTML
+
+`Screen.fullScreen` from the game obeys the browser Fullscreen API, which refuses anything not
+triggered by a real user gesture — hence buttons only, never automatic.
+
+**The one in `tools/embed.html` matters more.** The game sits two iframes deep in Google Sites and
+we do not control the outer iframe, so if it was not granted fullscreen the request is refused
+however the game asks. Only the page can check `document.fullscreenEnabled` and *say so*, which it
+does — it disables the button and points at the Chromebook fullscreen key, which nothing can
+block, instead of leaving a control that silently does nothing.
+
+It requests on `#wrap` rather than the canvas so the loading bar and error pane stay inside the
+fullscreen view, and refocuses the canvas afterwards, since clicking the button steals focus and
+keyboard input dies without it.
 
 ### Traffic AI — built 2026-08-30
 
