@@ -1118,6 +1118,42 @@ at other speeds before changing either. Nothing falling off → lower the minimu
 damage to ~0.1. Panels coming off too readily → raise `minimumImpulse` or lower
 `maxDamagePerImpact`, which is the more direct lever.
 
+## MEASURED ON A SCHOOL CHROMEBOOK — 2026-08-31
+
+**60 FPS, no lag, fast load**, playing the live Google Sites build for a day.
+
+This closes the largest open question in the project. Every performance claim written here before
+this date was reasoning, not measurement — and the reasoning turned out to be right, on the real
+device, with the real build:
+
+- 100k-triangle course, chunked at 100 m
+- Four cars, each a rigidbody with four sphere casts a physics step
+- Traffic AI probes, ~2 raycasts per step per car
+- Two code-built canvases, TMP text, deformation, detachable panels
+- 14.96 MB download over school Wi-Fi
+
+**What this licenses:** the budget has real headroom, so the next feature does not have to be
+argued down on performance grounds before it is tried. Spend it on things that make the game
+better and measure again afterwards.
+
+**What it does not license:** the numbers still get re-measured after anything that changes scene
+scale — more traffic, a bigger map, realtime shadows, post FX. 60 FPS on *this* content is not a
+blanket permission. And it is one device on one day; a different Chromebook model may be slower.
+
+## Ideas for later — not started
+
+Ethan's, recorded so they are not lost. Nothing here is designed or scheduled.
+
+- **Police chase mode.** Pursuit AI that hunts the player rather than racing to the bottom. The
+  probe fan is reusable for avoidance; the direction source becomes "toward the player" instead
+  of "steepest descent", which is exactly the swap the traffic AI's known limitation already
+  anticipates.
+- **Race mode.** The traffic AI already races to the bottom, so this is mostly scoring,
+  positions and a finish line rather than new driving code.
+- **Destruction derby mode.** An arena rather than a descent, last car running wins. Note this
+  breaks descent-seeking completely — there is no downhill in an arena — so it is the mode that
+  forces the AI's direction source to be replaced properly.
+
 ## Game design
 
 Arcade crash-driving, third-person chase cam.

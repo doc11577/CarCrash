@@ -19,10 +19,10 @@ using UnityEngine;
 /// It also degrades sensibly. On a map with no clear descent the cars simply slow and stop
 /// instead of driving into scenery with confidence.
 ///
-/// COST, because three of these run alongside the player. Probes are a raycast each, taken at
-/// `decisionsPerSecond` rather than every physics step: 7 probes at 14 Hz is about 100 casts a
-/// second per car, roughly 2 per physics step. The car itself is a normal
-/// CarController, which is 4 sphere casts a step — the AI is the cheap half by a wide margin.
+/// COST. Probes are raycasts, taken at a fixed rate rather than every physics step: the 7-probe
+/// fan at 14 Hz plus a 12-ray full-circle scan at 3 Hz is about 2.7 casts per physics step per
+/// car, against the 4 sphere casts the car itself already does. Measured on a school Chromebook
+/// 2026-08-31: the whole game holds 60 FPS, so there is room to make this smarter still.
 ///
 /// Traffic here is NOT the "kinematic until struck" scheme in the architecture notes. That was
 /// sized for ~20 background cars; these three are racing the player and have to drive over the
@@ -86,6 +86,36 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "penalty would be swamped by them at speed.")]
     public float straightBias = 0.035f;
 
+    [Header("Keeping control")]
+    [Tooltip("Sideslip in degrees — the angle between where the car POINTS and where it is " +
+             "actually going — beyond which it counts as sliding. Past this the steering stops " +
+             "chasing the racing line and starts catching the slide.")]
+    public float slipLimit = 14f;
+
+    [Tooltip("How hard it counter-steers into a slide. 1 steers fully into it, 0 ignores the " +
+             "slide entirely and keeps demanding the line that caused it.")]
+    [Range(0f, 1f)] public float counterSteer = 0.8f;
+
+    [Tooltip("Throttle cut at full slide. Lifting is most of how a real driver catches an " +
+             "oversteer, and it costs the AI far less time than spinning does.")]
+    [Range(0f, 1f)] public float slipLift = 0.55f;
+
+    [Tooltip("Steering slew is divided by this much at top speed. A rate that feels responsive " +
+             "at 10 m/s is a flick of the wheel at 40 and will spin the car.")]
+    [Range(1f, 4f)] public float steerRateAtSpeed = 2.4f;
+
+    [Header("Turning around")]
+    [Tooltip("Full-circle scans per second, used to find downhill regardless of facing and to " +
+             "decide arrival. 12 casts each.")]
+    public float scansPerSecond = 3f;
+
+    [Tooltip("Degrees away from downhill that counts as facing the wrong way.")]
+    public float wrongWayAngle = 105f;
+
+    [Tooltip("Seconds facing the wrong way before committing to a turnaround. Stops a spin " +
+             "mid-crash from triggering one.")]
+    public float wrongWayTime = 1.2f;
+
     [Header("Separation")]
     [Tooltip("Cars closer than this push each other apart. 0 disables.")]
     public float separationRadius = 10f;
@@ -122,6 +152,9 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     [SerializeField] bool arrivedReadout;
     [SerializeField] float speedReadout;
     [SerializeField] float reachReadout;
+    [SerializeField] float slipReadout;
+    [SerializeField] float wrongWayReadout;
+    [SerializeField] bool turningAroundReadout;
 
     CarController car;
     Rigidbody body;
@@ -131,6 +164,12 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     float slowSince = -1f;
     float noDescentSince = -1f;
     float reverseUntil = -1f;
+    float nextScanAt;
+    float wrongWaySince = -1f;
+    bool turningAround;
+    Vector3 downhill = Vector3.forward;
+    float downhillDrop;
+    float[] scores;
     bool arrived;
 
     void Awake()
@@ -141,6 +180,7 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         // Take the wheel. A traffic car built from the player's prefab may still carry a
         // CarInput; left enabled it would read the same keyboard the player is using and every
         // traffic car would mirror their steering.
+        scores = new float[Mathf.Max(3, probes)];
         car.Driver = this;
 
         CarInput keyboard = GetComponent<CarInput>();
@@ -169,6 +209,12 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
             Decide();
         }
 
+        if (Time.time >= nextScanAt)
+        {
+            nextScanAt = Time.time + 1f / Mathf.Max(0.5f, scansPerSecond);
+            ScanForDownhill();
+        }
+
         Drive();
     }
 
@@ -191,40 +237,137 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         float bias = straightBias * (reach / Mathf.Max(1f, lookAhead));
 
         float here = GroundHeight(transform.position, 6f);
+        int best = 0;
         float bestScore = float.NegativeInfinity;
-        float bestAngle = 0f;
         float bestDrop = 0f;
 
         for (int i = 0; i < probes; i++)
         {
-            // -spread .. +spread, with the middle probe dead ahead when `probes` is odd.
-            float t = probes == 1 ? 0.5f : i / (float)(probes - 1);
-            float angle = Mathf.Lerp(-probeSpread, probeSpread, t);
-
+            float angle = ProbeAngle(i);
             Vector3 dir = Quaternion.AngleAxis(angle, Vector3.up) * forward;
-            Vector3 sample = transform.position + dir * reach;
-
-            float there = GroundHeight(sample, 25f);
+            float there = GroundHeight(transform.position + dir * reach, 25f);
 
             // No ground found at all: a hole, or beyond the mesh. Treated as the worst option
             // rather than the best, or cars would dive off the outside of the map.
             float drop = float.IsNegativeInfinity(there) ? -1000f : here - there;
 
-            float score = drop - Mathf.Abs(angle) * bias;
-            if (score <= bestScore) continue;
+            scores[i] = drop - Mathf.Abs(angle) * bias;
 
-            bestScore = score;
-            bestAngle = angle;
+            if (scores[i] <= bestScore) continue;
+            bestScore = scores[i];
             bestDrop = drop;
+            best = i;
         }
 
+        float bestAngle = InterpolatedAngle(best);
         bestAngle += SeparationBias(forward);
 
         chosenAngle = bestAngle;
         bestDropReadout = bestDrop;
         chosenAngleReadout = bestAngle;
+    }
 
-        UpdateArrival(bestDrop);
+    float ProbeAngle(int i)
+    {
+        float t = probes == 1 ? 0.5f : i / (float)(probes - 1);
+        return Mathf.Lerp(-probeSpread, probeSpread, t);
+    }
+
+    /// <summary>
+    /// The best direction, interpolated BETWEEN probes rather than snapped to one.
+    /// </summary>
+    /// <remarks>
+    /// Seven probes over 110 degrees are 18 degrees apart, so taking the single best one gives a
+    /// steering signal that can only ever be one of seven values. Rounding an obstacle then
+    /// means an 18-degree step change in demand, the car snaps to it, and on a chassis with less
+    /// rear grip than front that is exactly how it spins — reported from play 2026-08-31 as
+    /// oversteering round obstacles and losing control.
+    ///
+    /// Fitting a parabola through the winner and its two neighbours and taking the peak gives a
+    /// continuous angle for the same seven casts. Costs three subtractions.
+    /// </remarks>
+    float InterpolatedAngle(int best)
+    {
+        if (best <= 0 || best >= probes - 1) return ProbeAngle(best);
+
+        float left = scores[best - 1];
+        float mid = scores[best];
+        float right = scores[best + 1];
+
+        float denominator = left - 2f * mid + right;
+        if (Mathf.Abs(denominator) < 1e-5f) return ProbeAngle(best);
+
+        // Peak offset in probe-index units, clamped to the neighbours so a flat or noisy
+        // triple cannot throw the aim outside the fan it was measured over.
+        float shift = Mathf.Clamp(0.5f * (left - right) / denominator, -1f, 1f);
+        float step = probes > 1 ? (2f * probeSpread) / (probes - 1) : 0f;
+
+        return ProbeAngle(best) + shift * step;
+    }
+
+    /// <summary>
+    /// Coarse full-circle sweep for where downhill actually is, regardless of facing.
+    /// </summary>
+    /// <remarks>
+    /// The forward fan only sees a 110-degree window, which is fine while pointing roughly the
+    /// right way and useless once not. A car spun round by a crash finds every direction ahead
+    /// rising, picks the least-bad, and either crawls uphill or trips the stuck timer and
+    /// reverses — which finally goes downhill, so it settles into driving backwards down the
+    /// mountain and never corrects. Reported from play 2026-08-31.
+    ///
+    /// A full sweep answers "which way is down" independently of which way the nose points, so
+    /// the car can know it is facing the wrong way instead of inferring it from failure.
+    ///
+    /// Run at scansPerSecond (3 Hz) rather than every decision: 12 casts at 3 Hz is ~0.7 per
+    /// physics step per car, against the fan's ~2.
+    /// </remarks>
+    void ScanForDownhill()
+    {
+        const int rays = 12;
+        float here = GroundHeight(transform.position, 6f);
+        float reach = lookAhead * 1.4f;
+
+        float bestDrop = float.NegativeInfinity;
+        Vector3 bestDir = Flat(transform.forward);
+
+        for (int i = 0; i < rays; i++)
+        {
+            float angle = i * (360f / rays);
+            Vector3 dir = Quaternion.AngleAxis(angle, Vector3.up) * Vector3.forward;
+            float there = GroundHeight(transform.position + dir * reach, 25f);
+            if (float.IsNegativeInfinity(there)) continue;
+
+            float drop = here - there;
+            if (drop <= bestDrop) continue;
+
+            bestDrop = drop;
+            bestDir = dir;
+        }
+
+        downhill = bestDir;
+        downhillDrop = float.IsNegativeInfinity(bestDrop) ? 0f : bestDrop;
+
+        // Arrival is decided HERE, not from the forward fan. "No descent ahead of me" is also
+        // true of a car facing a wall; "no descent in any direction" is what being at the
+        // bottom actually means.
+        UpdateArrival(downhillDrop);
+
+        float off = Vector3.SignedAngle(Flat(transform.forward), downhill, Vector3.up);
+        wrongWayReadout = off;
+
+        // Speed-independent, unlike the stuck timer. A car reversing downhill at 20 m/s is
+        // never "stuck", which is why it could keep doing it indefinitely.
+        bool facingAway = Mathf.Abs(off) > wrongWayAngle && downhillDrop > arrivedDrop;
+
+        if (!facingAway)
+        {
+            wrongWaySince = -1f;
+            if (turningAround && Mathf.Abs(off) < wrongWayAngle * 0.45f) turningAround = false;
+            return;
+        }
+
+        if (wrongWaySince < 0f) wrongWaySince = Time.time;
+        else if (Time.time - wrongWaySince >= wrongWayTime) turningAround = true;
     }
 
     /// <summary>
@@ -315,14 +458,64 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         }
 
         CheckStuck();
+        turningAroundReadout = turningAround;
 
-        float wanted = Mathf.Clamp(chosenAngle / Mathf.Max(1f, car.maxSteerAngle), -1f, 1f);
-        Steer = Mathf.MoveTowards(Steer, wanted, steerRate * Time.deltaTime);
+        Vector3 flat = Vector3.ProjectOnPlane(
+            body != null ? body.linearVelocity : Vector3.zero, Vector3.up);
+        float speed = flat.magnitude;
 
-        // Lift off for a corner. Without it they arrive at every turn at top speed, understeer
-        // into the wall and spend the run reversing out of it.
-        float lift = 1f - Mathf.Abs(Steer) * cornerLift;
-        Throttle = cruiseThrottle * lift;
+        // Sideslip: the angle between where the car POINTS and where it is actually GOING.
+        // Below walking pace the direction of travel is noise, so it is not measured there.
+        float slip = speed > 2f
+            ? Vector3.SignedAngle(Flat(transform.forward), flat.normalized, Vector3.up)
+            : 0f;
+        slipReadout = slip;
+
+        float target = turningAround
+            ? TurnaroundSteer()
+            : Mathf.Clamp(chosenAngle / Mathf.Max(1f, car.maxSteerAngle), -1f, 1f);
+
+        // CATCH THE SLIDE. Past slipLimit the steering stops chasing the line it wanted and
+        // starts steering INTO the slide, which is what a driver does and what keeps a car with
+        // less rear grip than front from spinning. Without it the AI keeps demanding the turn
+        // that started the slide, which tightens it.
+        float slide = Mathf.Clamp01((Mathf.Abs(slip) - slipLimit) / Mathf.Max(1f, slipLimit));
+        if (slide > 0f)
+        {
+            float catchIt = Mathf.Clamp(slip / Mathf.Max(1f, car.maxSteerAngle), -1f, 1f);
+            target = Mathf.Lerp(target, catchIt, slide * counterSteer);
+        }
+
+        // Slew the wheel more slowly the faster it is going. A rate that feels responsive at
+        // 10 m/s is a flick of the wrist at 40 and puts the car sideways on its own.
+        float fast = Mathf.Clamp01(speed / Mathf.Max(1f, car.topSpeed));
+        float slew = steerRate / Mathf.Lerp(1f, steerRateAtSpeed, fast);
+        Steer = Mathf.MoveTowards(Steer, target, slew * Time.deltaTime);
+
+        if (turningAround)
+        {
+            // Ease off while swinging round. Full throttle on full lock just understeers wide
+            // and turns a three-second correction into a lap of the valley floor.
+            Throttle = 0.45f;
+            return;
+        }
+
+        // Lift for a corner, and lift MORE while sliding. Lifting is most of how a real driver
+        // catches an oversteer, and it costs far less time than spinning does.
+        float lift = 1f - Mathf.Abs(Steer) * cornerLift - slide * slipLift;
+        Throttle = cruiseThrottle * Mathf.Clamp01(lift);
+    }
+
+    /// <summary>Steering demand while deliberately turning round to face downhill again.</summary>
+    /// <remarks>
+    /// Full lock toward wherever downhill is. The corridor is 26 m wide and the car turns in far
+    /// less than that, so driving round is quicker and much less fragile than a three-point turn
+    /// — and if it does wedge itself, the existing stuck timer reverses it out.
+    /// </remarks>
+    float TurnaroundSteer()
+    {
+        float off = Vector3.SignedAngle(Flat(transform.forward), downhill, Vector3.up);
+        return Mathf.Sign(off);
     }
 
     void CheckStuck()
