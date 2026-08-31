@@ -72,6 +72,28 @@ public class CarPaint : MonoBehaviour
         }
 
         paintedSlots = slots.Count;
+
+        // Nothing matched, so the car keeps whatever colour its texture happens to be — and a
+        // car that ignores its paint looks identical to a car that was painted that colour on
+        // purpose. The De Tomaso P72's material is called `Standard32B531`, not `Body`, so it
+        // stayed its native red and nothing anywhere said why.
+        //
+        // Listing what IS on the model turns "why is it red" into an answer rather than a hunt.
+        if (slots.Count == 0)
+        {
+            System.Collections.Generic.HashSet<string> found =
+                new System.Collections.Generic.HashSet<string>();
+
+            foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
+                foreach (Material material in renderer.sharedMaterials)
+                    if (material != null) found.Add(material.name);
+
+            Debug.LogWarning(
+                $"CarPaint on '{name}' painted nothing: no material starts with " +
+                $"\"{paintMaterialName}\". Materials on this model are: " +
+                $"{string.Join(", ", found)}. Set Paint Material Name to whichever one is the " +
+                "bodywork.", this);
+        }
     }
 
     /// <summary>Repaint. Safe to call before Start — it collects on demand.</summary>
