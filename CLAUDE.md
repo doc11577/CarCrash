@@ -358,8 +358,10 @@ Build order — expensive unknowns first, content last:
    - **Re-tune damage and scoring now traffic exists**, and decide whether hitting traffic should
      pay (`TrafficSpawner.scoreTrafficDamage`, currently off). Also sanity-check the 50,000 price
      against a real run: at ~200 gears a run that is 250 runs.
-   - **A second map.** The generator makes this cheap — `--theme jungle`, a different `--seed`,
-     a different length. This is the highest content-per-effort item in the project.
+   - **A second map.** The generator makes this cheap — a different `--seed`, `--theme`,
+     length and width. Highest content-per-effort item in the project, but pick numbers that
+     change how it DRIVES, not just how it looks — corridor width and curviness do that,
+     a new seed alone does not.
    - **Trim the TMP font asset** if the download needs to come down. 2.2 MB to ~100 KB.
    - **Panel seams on the P72.** Region boxes cut straight lines through a curved body; fixing
      it properly needs carving that snaps to edge loops.
@@ -1466,10 +1468,44 @@ downhill at part throttle, which a 26 m corridor has ample room for.
 of me"* is also true of a car facing a wall, whereas *"no descent in any direction"* is what being
 at the bottom actually means.
 
-Cost: the fan at 14 Hz plus the scan at 3 Hz is ~2.7 raycasts per physics step per car, against
-the 4 sphere casts the car itself already does. **The AI is still the cheap half** — the
-rigidbodies and their suspension are the real expense — and the Chromebook holds 60 FPS, so there
-is room to make it smarter still.
+#### Dodging obstacles took three attempts, and the first two were the wrong TOOL
+
+Worth reading as a sequence, because each fix looked reasonable and none of the first two worked.
+
+1. **"They drive into rocks."** The probes sampled ONE point, at the far end of the ray. At speed
+   that ray is ~49 m, so the car read the ground 49 m away and was blind to a boulder at 10 m.
+   Fixed by sampling along the ray as well. **Changed nothing.**
+2. **"Does the AI account for the hill going down?"** No — and that was why. `rise = sample −
+   groundUnderCar` only works on the flat. On a 15% descent the ground 20 m ahead is already 3 m
+   lower, so a 1.5 m boulder read as 1.5 m *below* the car and scored as nothing; it would have
+   needed to be over 4 m tall to trip a 1.1 m threshold. **The descent hid every obstacle on it.**
+   Fixed by measuring against the slope to the far sample. **Still drove into the same rock.**
+3. **"The hazard readout only rose after the impact, while it was in the air."** That is the tell
+   that it was not seeing the rock *at all*, rather than seeing it and reacting weakly. Point
+   samples have **gaps**: at reach 49 m they landed at 4, 12, 23 and 35 m — an 8 m gap in the
+   near field — and a boulder is up to 7 m wide. Rocks fell cleanly between samples.
+
+**The fix is a swept sphere, which cannot have gaps**, aimed ALONG the hillside toward the far
+sample rather than horizontally. It is also *cheaper* than the thing that did not work: one cast
+per direction instead of four.
+
+**The lesson, and it generalises: point sampling answers "how high is the ground there", and that
+is the wrong question for "is something in my way".** Reach for a sweep the moment the question is
+about obstruction. Two rounds were spent tuning numbers on a test that could not have worked at
+any setting.
+
+`hazardHeight` (1.4) and `hazardRadius` (0.7) define the sphere: it spans roughly the body of the
+car, above the course's 0.55 m surface noise and low enough to catch a boulder that only just
+protrudes.
+
+**Diagnosing it again:** watch `hazardReadout` *as a car approaches* an obstacle. Rising only on
+contact means the sweep is not hitting it — and the first thing to check then is whether the
+`CourseRock*` objects actually have their Mesh Colliders, because a rock with no collider is
+invisible to a sweep and a raycast alike and looks exactly like this bug.
+
+Cost: the fan (one downward ray plus one sphere sweep each) at 14 Hz plus the full-circle scan at
+3 Hz is **~4 casts per physics step per car**, against the 4 the car itself already does. **The AI
+is still the cheap half** — the rigidbodies and their suspension are the real expense.
 
 #### `CarPaint` — tint per SUBMESH, never per renderer
 
