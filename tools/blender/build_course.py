@@ -72,8 +72,8 @@ THEMES = {
     # a blue-grey ground reads as shadowed snow under a pale sky, where a warm one
     # reads as dust however steep the slope is.
     "everest": {
-        "ground": (0.62, 0.65, 0.70, 1.0),
-        "rock": (0.31, 0.33, 0.38, 1.0),
+        "ground": (0.86, 0.89, 0.93, 1.0),
+        "rock": (0.42, 0.45, 0.52, 1.0),
     },
 }
 
@@ -134,6 +134,18 @@ def parse_args():
                    help="Surface noise amplitude in metres on the drivable corridor. Geometry "
                         "cannot go finer than the --cell can represent, so detail below about "
                         "4 m belongs in the texture and in scattered boulders, not here.")
+    p.add_argument("--ridged", type=float, default=0.0,
+                   help="0-1. Blends RIDGED noise into the surface, which has sharp "
+                        "crests instead of round blobs. Ordinary noise is smooth by "
+                        "construction, so a surface built from it reads as dunes or as a "
+                        "rolling road at any amplitude. This is the only thing in the "
+                        "generator that makes a hard edge, and it is the difference "
+                        "between bumpy and mountainous.")
+    p.add_argument("--flat-ground", action="store_true",
+                   help="Flat-shade the drivable surface as well as the rock. Every cell "
+                        "becomes a visible facet, which is what a broken mountain face "
+                        "looks like. Off by default because on a smooth road it reads as "
+                        "a series of ramps.")
     p.add_argument("--curviness", type=float, default=1.8,
                    help="How much the centreline snakes. 0 is straight.")
     p.add_argument("--rollers", type=float, default=9.0,
@@ -204,10 +216,100 @@ def fbm(x, seed, octaves=4):
     return total / norm if norm else 0.0
 
 
-def noise2(x, y, seed):
-    """Separable 2D noise. Not a true 2D lattice, but the diagonal banding it produces is
-    invisible under a rock texture and it costs a fraction of the real thing."""
-    return (fbm(x, seed) + fbm(y, seed + 5171)) * 0.5
+def ridged(x, seed, octaves=4):
+    """Noise with sharp CRESTS instead of round blobs.
+
+    Ordinary value noise is smooth by construction, so a surface built from it reads as dunes
+    or as a rolling road however much amplitude it is given — which is exactly what Everest
+    looked like. Folding the noise about its midpoint (`1 - |2n-1|`) turns every zero crossing
+    into a crease, and squaring sharpens the crease into an edge.
+
+    This is the standard ridged-multifractal trick and it is the difference between "bumpy" and
+    "mountainous". Nothing else in the generator produces a hard edge.
+    """
+    total = 0.0
+    amp = 1.0
+    norm = 0.0
+    freq = 1.0
+
+    for o in range(octaves):
+        n = value_noise(x * freq, seed + o * 977)
+        crest = 1.0 - abs(2.0 * n - 1.0)
+        total += crest * crest * amp
+        norm += amp
+        amp *= 0.5
+        freq *= 2.0
+
+    return total / norm if norm else 0.0
+
+
+def hash2(ix, iy, seed):
+    """Deterministic 0..1 from a 2D lattice cell."""
+    n = (ix * 374761393 + iy * 668265263 + seed * 1442695041) & 0xFFFFFFFF
+    n = (n ^ (n >> 13)) * 1274126177 & 0xFFFFFFFF
+    return ((n ^ (n >> 16)) & 0xFFFFFFFF) / 4294967295.0
+
+
+def value2(x, y, seed):
+    """Bilinear value noise on a real 2D lattice."""
+    ix = math.floor(x)
+    iy = math.floor(y)
+    fx = x - ix
+    fy = y - iy
+    ux = fx * fx * (3.0 - 2.0 * fx)
+    uy = fy * fy * (3.0 - 2.0 * fy)
+
+    a = hash2(int(ix), int(iy), seed)
+    b = hash2(int(ix) + 1, int(iy), seed)
+    c = hash2(int(ix), int(iy) + 1, seed)
+    d = hash2(int(ix) + 1, int(iy) + 1, seed)
+
+    return (a + (b - a) * ux) + ((c + (d - c) * ux) - (a + (b - a) * ux)) * uy
+
+
+def noise2(x, y, seed, octaves=4):
+    """Proper 2D fBm.
+
+    This was SEPARABLE -- `(fbm(x) + fbm(y)) / 2` -- with a comment claiming the banding it
+    produces is invisible under a rock texture. That held while the relief was gentle and
+    smooth-shaded. It stopped holding the moment Everest asked for a jagged, high-amplitude,
+    flat-shaded face: separable noise puts its features on the axes, so the surface came out as
+    horizontal corduroy stripes running across the fall line, which is the single least
+    mountain-like thing a mountain can do.
+
+    A real lattice costs four hashes per octave instead of two. This is a build-time tool; the
+    whole course generates in seconds either way.
+    """
+    total = 0.0
+    amp = 1.0
+    norm = 0.0
+    freq = 1.0
+
+    for o in range(octaves):
+        total += value2(x * freq, y * freq, seed + o * 977) * amp
+        norm += amp
+        amp *= 0.5
+        freq *= 2.0
+
+    return total / norm if norm else 0.0
+
+
+def ridged2(x, y, seed, octaves=4):
+    """2D ridged noise: sharp creases instead of round blobs. See `ridged`."""
+    total = 0.0
+    amp = 1.0
+    norm = 0.0
+    freq = 1.0
+
+    for o in range(octaves):
+        n = value2(x * freq, y * freq, seed + o * 977)
+        crest = 1.0 - abs(2.0 * n - 1.0)
+        total += crest * crest * amp
+        norm += amp
+        amp *= 0.5
+        freq *= 2.0
+
+    return total / norm if norm else 0.0
 
 
 # ---------------------------------------------------------------------------- centreline
@@ -479,7 +581,17 @@ def surface_height(args, frames, i, offset, lift, features=None, step=1.0):
     fine = (noise2(along * 0.08, offset * 0.08, args.seed) - 0.5) * 2.0
     chatter = (noise2(along * 0.15, offset * 0.15, args.seed + 911) - 0.5) * 2.0
 
-    bumps = (broad * 1.25 + fine * 0.70 + chatter * 0.38) * args.roughness * on_corridor
+    bumps = (broad * 1.25 + fine * 0.70 + chatter * 0.38) * args.roughness
+
+    # Blend in ridged noise for a broken rock face rather than a rolling one. Kept as a blend
+    # rather than an addition so raising it does not also raise the amplitude -- the point is
+    # to change the SHAPE of the relief, not how much of it there is.
+    if args.ridged > 0.0:
+        crest = (ridged2(along * 0.055, offset * 0.055, args.seed + 3301) - 0.45) * 2.2
+        crest += (ridged2(along * 0.13, offset * 0.13, args.seed + 6607) - 0.45) * 0.9
+        bumps = bumps * (1.0 - args.ridged) + crest * args.roughness * args.ridged
+
+    bumps *= on_corridor
 
     # Relief on the walls, so the benches are weathered rather than machined. Kept well under
     # one bench height (wall / benches) on purpose -- noise louder than the terracing erases
@@ -638,7 +750,9 @@ def build_chunks(args, frames, features=None, step=1.0):
         # fabric, which is what the first render came out as. Flat shading lets each bench
         # face catch the light on its own. The corridor stays smooth so the surface the car
         # drives on does not read as a series of ramps.
-        mesh.polygons.foreach_set("use_smooth", [slot == 0 for slot in mat_ids])
+        smooth = [] if args.flat_ground else [slot == 0 for slot in mat_ids]
+        mesh.polygons.foreach_set("use_smooth",
+                                  smooth if smooth else [False] * len(mat_ids))
         mesh.update()
 
         ob = bpy.data.objects.new(name, mesh)

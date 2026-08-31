@@ -3,9 +3,19 @@ guid: 4a4023bd77d50bc44be4761f2abc35ae
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: CourseGround
+    second: {fileID: 2100000, guid: 2be5f6ade1ed6f34195b87e9d8e261b4, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: CourseRock
+    second: {fileID: 2100000, guid: 0fd87816292fb2049ac25e2bd11295af, type: 2}
   materials:
-    materialImportMode: 2
+    materialImportMode: 1
     materialName: 0
     materialSearch: 1
     materialLocation: 1

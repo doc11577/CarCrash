@@ -175,3 +175,26 @@ roughness dropped entirely, following the E30 precedent.
 
 `p72-split.fbx` is derived from `Source/FullBody.obj` by `tools/blender/split_car.py`.
 CC-BY permits modification provided attribution is kept.
+
+---
+
+## Everest course texture
+
+- **Author:** Rob Tuytel / Poly Haven — https://polyhaven.com
+- **License:** [CC0 1.0 Universal](http://creativecommons.org/publicdomain/zero/1.0/) (public domain)
+- **Attribution required:** No. Credited voluntarily.
+- **Location:** `Assets/Art/Tracks/Everest/Textures/`
+- **Retrieved:** 2026-08-31
+
+| File | Poly Haven asset | Used for |
+| --- | --- | --- |
+| `everest_snow_diff_1k.jpg` | `snow_03` | `CourseGround` — the drivable face |
+
+Base colour only at 1K, 0.57 MB. The rock material reuses Quarry's `quarry_rock_diff_1k` with a
+cold tint rather than downloading a second one — the download budget is the reason, and a tinted
+grey rock is indistinguishable from a cold one at the distance the walls are seen.
+
+Chosen over `snow_05`, which is patterned with **tractor tyre tracks**: they would tile across the
+whole mountain as repeating tread marks. `snow_03` is patchy snow over dark ground with no
+directional features, which also reads better here — snow clinging to a rock face rather than a
+clean white sheet, so the mountain shows through it.
