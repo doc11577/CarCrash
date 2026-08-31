@@ -110,8 +110,15 @@ public class RestartOverlay : MonoBehaviour
             // LoadSceneAsync returns null for a scene that is not in the Scene List, and
             // without this the coroutine would NullReference and leave InProgress stuck true,
             // which deadlocks every future load including restarts.
-            Debug.LogError($"RestartOverlay: scene '{sceneName ?? sceneIndex.ToString()}' is not " +
-                           "in File > Build Profiles > Scene List, so it cannot be loaded.");
+            // Unity's own message for this blames the build profile, which sends you to a list
+            // that usually turns out to be correct -- because the far more common cause is a
+            // MISTYPED NAME, and LoadSceneAsync cannot tell the two apart. Ask about the
+            // spelling first, since that is what it usually is.
+            Debug.LogError(
+                $"RestartOverlay: cannot load scene '{sceneName ?? sceneIndex.ToString()}'.\n" +
+                "CHECK THE SPELLING FIRST — it must match the scene asset exactly, and a typo " +
+                "here looks identical to a missing Scene List entry. Then check File > Build " +
+                "Profiles > Scene List actually contains it.");
             InProgress = false;
             Destroy(gameObject);
             yield break;
