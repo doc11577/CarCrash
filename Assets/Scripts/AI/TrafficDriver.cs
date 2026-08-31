@@ -20,9 +20,9 @@ using UnityEngine;
 /// instead of driving into scenery with confidence.
 ///
 /// COST. Probes are raycasts, taken at a fixed rate rather than every physics step: the 7-probe
-/// fan at 14 Hz plus a 12-ray full-circle scan at 3 Hz is about 2.7 casts per physics step per
-/// car, against the 4 sphere casts the car itself already does. Measured on a school Chromebook
-/// 2026-08-31: the whole game holds 60 FPS, so there is room to make this smarter still.
+/// fan (one downward ray plus one sphere sweep each) at 14 Hz plus a 12-ray full-circle scan at
+/// 3 Hz is about 4 casts per physics step per car, against the 4 the car itself already does.
+/// Measured on a school Chromebook 2026-08-31: the whole game holds 60 FPS.
 ///
 /// Traffic here is NOT the "kinematic until struck" scheme in the architecture notes. That was
 /// sized for ~20 background cars; these three are racing the player and have to drive over the
@@ -87,16 +87,15 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     public float straightBias = 0.035f;
 
     [Header("Dodging")]
-    [Tooltip("Extra samples taken ALONG each probe, between the car and where the probe aims. " +
-             "Without these the car only reads the ground at the far end of the ray and is " +
-             "blind to anything closer — which is why they drove into rocks.")]
-    [Range(0, 6)] public int hazardSamples = 4;
+    [Tooltip("Height above the car that the obstacle sweep starts, in metres. Together with " +
+             "Hazard Radius this decides what counts as an obstacle: the sphere spans roughly " +
+             "Height±Radius above the ground, so it should sit above the course's surface noise " +
+             "(0.55 m) and still catch a boulder that only just protrudes.")]
+    public float hazardHeight = 1.4f;
 
-    [Tooltip("Metres something must stick OUT OF THE HILLSIDE to count as an obstacle rather " +
-             "than a bump. Measured against the local slope, not against the car, so a descent " +
-             "cannot hide it. Raise it to make them attack kickers again; lower it to make " +
-             "them fussier about anything raised.")]
-    public float hazardHeight = 0.8f;
+    [Tooltip("Radius of the obstacle sweep, in metres. Around the car's half-width. Larger " +
+             "makes them give obstacles a wider berth and refuse tighter gaps.")]
+    public float hazardRadius = 0.7f;
 
     [Tooltip("How much a blocked path counts against a direction, against metres of descent " +
              "gained. Too low and they drive through rocks to reach a better line; too high and " +
@@ -315,42 +314,38 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     /// </remarks>
     float Hazard(Vector3 dir, float here, float far, float reach)
     {
-        float worst = 0f;
-        bool sloped = !float.IsNegativeInfinity(far);
+        // No ground out there at all: a hole or the edge of the map. Worse than any rock.
+        if (float.IsNegativeInfinity(far)) return 8f;
 
-        for (int s = 1; s <= hazardSamples; s++)
-        {
-            float t = s / (float)(hazardSamples + 1);
-            float f = Mathf.Pow(t, 1.5f);
-            float h = GroundHeight(transform.position + dir * (reach * f), 25f);
+        // A SWEPT SPHERE, NOT POINT SAMPLES. Point sampling along the ray was the second wrong
+        // answer to this: at reach 49 m the samples landed at 4, 12, 23 and 35 m, an 8 m gap in
+        // the near field, and a boulder is up to 7 m wide. Rocks fell cleanly BETWEEN samples
+        // and were never seen until the car was on top of one — reported as the hazard readout
+        // only rising after the impact, while the car was already in the air.
+        //
+        // A sphere sweep cannot have gaps. It is also cheaper: one cast per direction instead
+        // of four, so this halves the cast count while actually working.
+        //
+        // AIMED ALONG THE HILLSIDE, not horizontally. A horizontal sweep on a descent flies out
+        // over the valley and hits nothing; on a crest it hits the crest. Following the slope
+        // to the far sample means only things standing OUT of the ground get hit, which is the
+        // same correction the point-sampling baseline needed and for the same reason.
+        Vector3 slope = dir * reach + Vector3.up * (far - here);
+        float distance = slope.magnitude;
+        if (distance < 1f) return 0f;
 
-            // A gap in the ground close ahead is worse than any rock.
-            if (float.IsNegativeInfinity(h))
-            {
-                worst = Mathf.Max(worst, 8f);
-                continue;
-            }
+        // Started above the surface and swept with a radius under the car's half-width, so the
+        // sphere spans roughly the body of the car: high enough to clear the course's 0.55 m
+        // surface noise, low enough to catch a boulder that only just protrudes.
+        Vector3 origin = transform.position + Vector3.up * hazardHeight;
 
-            // MEASURED AGAINST THE SLOPE, NOT AGAINST THE CAR. This is the whole trick, and
-            // getting it wrong is why they drove into rocks without flinching.
-            //
-            // Comparing a sample to the ground under the car only works on the flat. On a 15%
-            // descent the ground 20 m ahead is already 3 m lower, so a 1.5 m boulder there
-            // reads as 1.5 m BELOW the car and registers as nothing at all — it would have to
-            // be over 4 m tall to trip a 1.1 m threshold. The hill hid every obstacle on it.
-            //
-            // The baseline is where the ground would be if the slope ran straight from here to
-            // the far sample, so what is measured is how far something sticks out of the
-            // hillside rather than how high it is relative to a car that is above it anyway.
-            float baseline = sloped ? Mathf.Lerp(here, far, f) : here;
-            float rise = h - baseline;
-            if (rise <= hazardHeight) continue;
+        if (!Physics.SphereCast(origin, hazardRadius, slope / distance, out RaycastHit hit,
+                                distance, groundMask, QueryTriggerInteraction.Ignore))
+            return 0f;
 
-            // Closer is worse: the same rock is a nuisance at 35 m and unavoidable at 4 m.
-            worst = Mathf.Max(worst, (rise - hazardHeight) * (1f + (1f - f) * 2f));
-        }
-
-        return worst;
+        // Closer is worse: the same rock is a nuisance at 35 m and unavoidable at 4 m.
+        float closeness = 1f - Mathf.Clamp01(hit.distance / distance);
+        return 1f + closeness * 3f;
     }
 
     float ProbeAngle(int i)
