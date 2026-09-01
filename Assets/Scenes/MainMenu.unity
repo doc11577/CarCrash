@@ -281,6 +281,10 @@ MonoBehaviour:
     displayName: Quarry Descent
     sceneName: Quarry
     blurb: "1,800 m  \xB7  270 m drop  \xB7  about 90 seconds"
+  - id: Everest
+    displayName: Everest Descent
+    sceneName: Everest
+    blurb: "2,000 m \xB7 1,400 m drop \xB7 35\xB0 average"
   roster: {fileID: 11400000, guid: d2c20dc4353d8a4429439e0ac46751d1, type: 2}
   minimumLoadTime: 0.4
 --- !u!4 &618861122

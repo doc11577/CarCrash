@@ -87,12 +87,20 @@ filenames, so it must stay `carcrash`. Only the four payload files are copied in
 Release steps:
 
 ```bash
-bash tools/publish.sh          # WebBuild/carcrash/Build -> prod/
-git add prod && git commit -m "..." && git push
-git rev-parse HEAD             # copy this hash
-# paste hash into BUILD_BASE in tools/embed.html
+bash tools/publish.sh          # WebBuild/carcrash/Build -> prod/  (refuses a stale build)
+git add -A && git commit -m "..." && git push
+bash tools/pin.sh              # pin embed.html to HEAD, after checking jsDelivr has it
 # re-paste tools/embed.html into Google Sites -> Insert -> Embed -> Embed code
 ```
+
+**Two guards were added 2026-08-31, both aimed at failures that have already cost a release.**
+Neither replaces reading the section below; they just make the two silent failures loud:
+
+- **`publish.sh` now refuses a build older than the project files.** It only ever copied, so it
+  would happily ship last week's build and print "Copied to prod". `--force` overrides.
+- **`tools/pin.sh` rewrites `BUILD_BASE` for you**, and refuses if jsDelivr cannot yet serve the
+  commit — which is what happens when the hash is taken before `git push`. Copying a
+  40-character hash into an HTML file by hand is exactly the task to give a script.
 
 `tools/embed.html` is the page pasted into Google Sites. It is *not* Unity's generated
 `index.html` — it's a hand-written replacement with a progress bar, on-screen error
@@ -346,6 +354,8 @@ Build order — expensive unknowns first, content last:
    · **the front end** (menu · map select · garage · TAB pause · fullscreen)
    · **the garage** (buy cars with gears · roster asset · spawned player car)
    · **dev mode** · **shipped to Google Sites, 14.96 MB, commit `f87f071`**
+   · **60 FPS measured on a real school Chromebook** · **Everest, the second map**
+   · **feats** · **the LCT 3000 box truck — split, wired and driving (third car, 12 parts)**
 
 2. **Now — THE CHROMEBOOK FRAME RATE.** It is the last unmeasured thing in the project and it is
    overdue: the scene has gained a 100k-triangle course, four cars with suspension, two 1K
@@ -509,7 +519,7 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 | `AI/TrafficSpawner.cs` | Spawns the traffic grid, paints it, optionally registers it for scoring. |
 | `Vehicle/ICarDriver.cs` | Throttle / steer / handbrake. Implemented by `CarInput` and `TrafficDriver`. |
 | `Vehicle/CarPaint.cs` | Tints the body submesh via a MaterialPropertyBlock. |
-| `Menu/MenuUI.cs` | Main menu, map select, car select. Carries the E30 CC-BY credit. |
+| `Menu/MenuUI.cs` | Main menu, patch notes, map select, garage, options, reset progress. Carries the three CC-BY credits. |
 | `Menu/UiKit.cs` | Canvas, button and label builders shared by the menu and the pause screen. |
 | `Game/PauseMenu.cs` | TAB pauses. Resume and return to menu. |
 | `Game/GameSelection.cs` | Chosen map and car, by string id, in PlayerPrefs. |
@@ -599,10 +609,13 @@ That is the intended behaviour. The cost is that a low wall lets the nose clip i
 **Both scenes must be in File > Build Profiles > Scene List.** `LoadSceneAsync` returns null for
 an unlisted scene, which is the single most likely reason the front end does nothing.
 
-**The Scene List currently has `Quarry` at index 0 and `MainMenu` at 1, so a BUILD starts in the
-game and never shows the menu.** That is convenient while developing — hitting play drops you
-straight into the car — but **`MainMenu` must be moved to index 0 before shipping**, or the
-front end ships unreachable. Nothing in the Editor will warn about this.
+**Scene List order, verified on disk 2026-08-31: `MainMenu` 0, `Quarry` 1, `Everest` 2.** That is
+correct for shipping — index 0 is where a build starts, so the front end is reachable.
+
+It was the other way round while the menu was being built, because starting in the game is
+convenient in the Editor. **Check this before every release**: index 0 decides what a player
+sees first, nothing in the Editor warns if it is wrong, and the failure is a build that drops
+straight into a run with no menu, no map select and no garage.
 
 The scene was renamed `SampleScene` → `Quarry` on 2026-08-30. `MenuUI`'s map list and its code
 default both say `Quarry`; anything still referring to `SampleScene` is stale.
@@ -1155,6 +1168,26 @@ Ethan's, recorded so they are not lost. Nothing here is designed or scheduled.
 - **Destruction derby mode.** An arena rather than a descent, last car running wins. Note this
   breaks descent-seeking completely — there is no downhill in an arena — so it is the mode that
   forces the AI's direction source to be replaced properly.
+- **Falling rocks on Quarry.** Ethan's, 2026-08-31. A hazard that comes down the quarry walls
+  while you drive. Not started, and not scheduled.
+
+  Three things to settle before writing any of it, recorded now because they are what will
+  decide whether it is cheap or ruinous:
+
+  1. **Rigidbody count is the whole cost.** The budget is ~40 live rigidbodies and detached
+     debris already competes for it. A rock that spawns, falls, lands and sleeps is affordable;
+     rocks that accumulate are not. It needs the `DebrisPool` treatment — pooled, capped,
+     expired, slept — and that pool already exists and should be reused rather than copied.
+  2. **A rock the player never sees coming is not a hazard, it is a punishment.** It has to
+     start visibly up the wall and fall with enough warning to react, which on a 26 m corridor
+     at 20 m/s is not much. Telegraph it (dust, a sound, a shadow) before the rock is lethal.
+  3. **The AI cannot see it.** `TrafficDriver`'s probes read the *ground*, and its hazard sweep
+     runs at 14 Hz against static geometry. A falling rock is neither, so traffic will drive
+     straight into them — which may be excellent (carnage the player watches) or may just look
+     stupid. Decide which before tuning anything.
+
+  Cheapest version that would work: reuse the existing `CourseRock` meshes, spawn from a few
+  hand-placed points on the wall tops, one pooled rigidbody each, despawn on sleep or timeout.
 
 ## Game design
 
@@ -1507,6 +1540,25 @@ Cost: the fan (one downward ray plus one sphere sweep each) at 14 Hz plus the fu
 3 Hz is **~4 casts per physics step per car**, against the 4 the car itself already does. **The AI
 is still the cheap half** — the rigidbodies and their suspension are the real expense.
 
+#### A truck in the traffic mix needs its own probe size — 2026-08-31
+
+`TrafficSpawner.carPrefabs` picks at random per car, so adding `TrafficTruck` to the array is the
+whole job. Two values on `TrafficDriver` are **sized for a car and must be changed per prefab**,
+because they describe the vehicle's own body rather than the course:
+
+- **`hazardRadius` 0.7 → 1.1.** This is the radius of the swept sphere that answers "is something
+  in my way", and it should be roughly the half-width of the vehicle. A truck 2.18 m wide probing
+  with a car's 1.4 m sphere drives its outer 40 cm into rocks the sweep never saw — the same
+  class of bug as the point-sampling gaps, and it will look identical: the hazard readout rises
+  only on contact.
+- **`hazardHeight` 1.4 → 1.6**, so the sweep sits in the middle of a taller body.
+
+**Do not raise `speedBoost` to stop the truck being left behind.** Its `topSpeed` is 24 against
+the E30's 32 and that is the point — a slow heavy thing to catch and hit is worth more to a crash
+game than another car that vanishes down the hill. `speedBoost` multiplies the instance's own
+`topSpeed`, so the truck stays slower than the cars whatever it is set to, and pushing it just
+makes the truck worse at the corners it is already bad at.
+
 #### `CarPaint` — tint per SUBMESH, never per renderer
 
 `renderer.SetPropertyBlock(block)` applies to **every submesh that renderer draws**, and the E30's
@@ -1582,6 +1634,60 @@ Decisions that are load-bearing:
   `PlayerCar.Current` is also the right hook for the garage, and for `ChaseCamera.target` and
   `PerfReadout.car`, both of which are still hard scene references and will break the same way
   the moment a car is spawned rather than placed.
+
+#### Patch notes and reset progress — 2026-08-31
+
+**Patch notes are drawn on the main screen, not behind a button.** Nobody clicks a "what's new"
+link, and the point is that a returning player sees what changed without going looking. They sit
+between the banked-gears line and the tagline.
+
+**`MenuUI.PatchNotes` is a `const`, and that is deliberate.** A public string would be serialized
+into `MainMenu.unity` the moment the component was added, and from then on editing it in code
+would change nothing on screen — the same trap that left `CarInteriorProps` poking through the
+bonnet with the bug "fixed". Release notes are edited once per release by the person making the
+release, so an Inspector field buys nothing and costs a silent failure. **Edit `PatchTitle` and
+`PatchNotes` at the top of `MenuUI.cs` each release.** There is room for about eight lines before
+it collides with the tagline, and nothing measures that for you.
+
+**RESET PROGRESS arms on the first press and fires on the second.** It is one of the few
+genuinely irreversible things in the game. A two-press button beats a confirm dialog, which
+would be a second canvas, a modal state and another place for input focus to get lost in a
+double-nested Google Sites iframe — for a control used about once a year. It disarms whenever
+the Options page is left, so a stray press cannot sit armed waiting for an unrelated click.
+
+**Reset turns dev mode OFF as well as clearing the wallet.** Two reasons, and the second is the
+practical one: leaving it on puts the game in a state no real player can be in, and the main
+reason to want a reset button at all is checking what a new player actually sees.
+`DevMode.TryUnlock` grants gears **only at unlock**, so a wipe that left dev mode on would give a
+dev-mode player zero gears and no route back short of re-entering the code anyway.
+
+**Pages now repaint on arrival, not only at build time.** All four pages are built once in
+`Awake`, so the main screen's gears line was a build-time snapshot. That was invisible only
+because returning from a run reloads the whole menu scene — but a reset changes the wallet,
+ownership and dev mode while every page already exists. `Show()` refreshes Main and Cars.
+
+#### A code-built menu list must be laid out from a BAND, not a fixed step
+
+Found 2026-08-31, when the truck made three cars: the garage's blurb, OWNED line and CC-BY credit
+all drew straight through the third car button. Both list pages were written as
+`y = top - i * step` with everything below them at hand-picked coordinates, which is correct
+only for the number of entries that existed when it was written. **Map select has the identical
+bug waiting at four maps** and was fixed at the same time rather than left to happen.
+
+`UiKit.Band` gives the rows a fixed vertical band and divides it. The slot is **capped** at the
+comfortable size, so nothing moves until the list would otherwise overflow and the two-map page
+looks exactly as it did; past that point the rows and their labels shrink together. The label
+size has to shrink with the button — a 30pt label in a 34pt button spills out of it, which looks
+exactly like the clipping the compression was there to prevent, so `UiKit.Button` takes a
+`fontSize`.
+
+It is **not** a scroll view. Past roughly eight rows the text is too small to read and a real
+`ScrollRect` is the answer — viewport, mask and its own raycaster. Not worth building for a
+roster this size, but that is the point at which it becomes worth it.
+
+The general rule, because this project builds all its UI in code: **anything driven by an array
+whose length can change needs a layout that reads that length.** A hand-placed y is a promise
+that the array will never grow.
 
 #### The HUD is built in code, and that is deliberate
 
@@ -1727,6 +1833,83 @@ dark interior**, not deformation. Hood gone shows a dark engine bay; door gone s
 cabin; glass simply disappears. That is exactly what `InteriorShell` plus real panel
 detachment produces, which is why this approach was chosen over faking it.
 
+### Third car — LCT 3000 '95 box truck, added 2026-08-31 — **WIRED AND DRIVING**
+
+`Assets/Art/Vehicles/LCT3000/lct3000-split.fbx`, **CC-BY, Daniel Zhabotinsky — attribution
+required in-game**, see CREDITS.md. 18,947 tris as downloaded, **11,640 after splitting**.
+
+**Confirmed in play 2026-08-31: it drives.** That also confirms the whole `--nose` reorientation
+path — the truck reached Unity upright, facing forward, with `wheelVisualEuler (0, 0, 0)` and
+Scale Factor 1.0, exactly as the P72-layout argument predicted. `--nose` is therefore the
+recommended flag for every future model, and the wheel-axis table below is now proven rather
+than reasoned.
+Authored in metres at real-world scale (6.02 × 2.61 × 2.84 m), so `--scale` is not needed and
+Unity **Scale Factor stays 1.0**. It also arrives already grounded.
+
+**It is the first pre-split model in the project, and that is the interesting part.** 27 mesh
+objects with the artist's own panel cuts: separate bumpers, rear box doors with inner panels, a
+full cargo-bay liner, a cab interior, suspension, and all four wheels already named per corner.
+`--keep` exists because of it — see the Blender pipeline section.
+
+Two consequences that break this project's usual pattern:
+
+- **No `InteriorShell`.** `Bottom` (5,772 tris) is a real cargo-bay liner — inner walls, roof,
+  floor, chassis rails, mudguards, tail-lift frame and the cab's inner shell — and `Interior`
+  (3,253 tris) is a real cab. Between them they do the shell's job with real geometry, so the
+  truck is split `--no-shell`. Verified by rendering those two objects alone.
+- **The mirrors live inside `Bottom`**, not the body, which is why the truck measures 2.61 m
+  wide against a 2.18 m body.
+
+Twelve detachable parts, more than either car: `PartBumperF/R`, `PartBoxDoorL/R` (the box's
+rear doors — the signature truck damage, and they open onto a real cargo bay), `PartDoorL/R`
+(cab), `PartMirrorL/R`, and four wheels. Five materials after dropping the badges and plates.
+
+Build command:
+
+```bash
+"$BL" --background --python tools/blender/split_car.py -- \
+  --input Assets/Art/Vehicles/LCT3000/Source/lct3000.fbx \
+  --output Assets/Art/Vehicles/LCT3000/lct3000-split.fbx \
+  --tris 12000 --profile truck --nose +x --up z --keep-interior --no-shell \
+  --drop "Body_Badges,Numberplate_front,Numberplate_rear" \
+  --keep "Bumper_front=PartBumperF,Bumper_rear=PartBumperR,\
+Reardoor_Left=PartBoxDoorL:outer,Reardoor_Left_Inner=PartBoxDoorL:outer,\
+Reardoor_Right=PartBoxDoorR:outer,Reardoor_Right_Inner=PartBoxDoorR:outer"
+```
+
+**A truck is not a heavy car, and the numbers have to scale together.** Static load per corner
+is `mass x 9.81 / 4`, and `springStrength` was sized so rest compression lands at ⅓ — so at
+3,000 kg every load-bearing spring number scales by **2.5x** off the E30's, or the truck sits on
+its bump stops from the first frame. `centreOfMassOffset` is the one that is *not* a scale:
+Unity derives the centre from the three collider boxes at **y ≈ 1.571** on this body, which is
+half the truck's height, and it has to be pulled down explicitly or the thing falls over
+leaving the start bay.
+
+**Known trade-off: approach 24.3°, departure 20.7°, breakover 20.3°**, against the E30's
+30.4 / 27.2 / 21.8. The truck will belly out on quarry rocks the E30 clears. That is correct for
+a box truck and is left as character, not fixed.
+
+#### Damage on a heavy vehicle — mass changes the impulse, not just the feel
+
+**A 3,000 kg truck reports ~2.5x the collision impulse of the 1,200 kg E30 at the same speed**,
+because impulse is a change in momentum. The E30's measured wall hit is ~16,500, so the truck's
+is around **41,000**, which at `damagePerImpulse 0.045` is ~1,800 damage from one contact against
+parts holding 60-160. Two consequences, and they pull in opposite directions:
+
+- **`maxDamagePerImpact` is doing ALL the work**, even more than on the E30. Raising it is the
+  direct lever for "more destructible"; `damagePerImpulse` and `minimumImpulse` barely register
+  at these impulses.
+- **`minimumImpulse` has to go UP, not down, on a heavy vehicle.** The `OnCollisionStay` gate is
+  an impulse threshold, and a vehicle merely *resting* transmits `mass x g x fixedDeltaTime` per
+  step: **235 for the E30, but 589 for the truck**. The E30's 900 leaves a 3.8x margin over
+  resting; the same 900 on the truck leaves 1.5x, which is close enough that settling on its roof
+  starts to register as sustained damage. 1500 restores a sane margin.
+
+This is the general rule for any future vehicle: **scale `minimumImpulse` with mass to keep the
+resting margin, then set destructibility with `maxDamagePerImpact` and part health.** Getting it
+backwards — lowering `minimumImpulse` to make something more destructible — makes a heavy vehicle
+take phantom damage from standing still.
+
 ### Measured: decimation does not rescue a high-poly base
 
 Tested on a 358k-tri showcase model (three.js Ferrari, dev rig only — **not shipped**,
@@ -1782,6 +1965,52 @@ wrong:
   with overhangs the car should duck under. Mirrors are excluded from collision bounds; they
   are fragile protrusions and letting them set the width makes the car 0.37 m too wide.
 
+#### Pre-split models: `--keep`, `--drop`, `--nose`, and the `truck` profile (2026-08-31)
+
+Added for the LCT 3000 box truck, which is the **first model in the project that arrives
+already split by object**. Region carving is a fallback for welded shells, not the goal — an
+artist's cut follows the real panel gap and no bounding box will ever match it.
+
+- **`--keep "Source=PartName[:hinge]"`** preserves an existing object as a named part instead
+  of welding it into `Body`. Several sources may map to one part and are joined, which is how
+  the truck's `Reardoor_Left` + `Reardoor_Left_Inner` become one `PartBoxDoorL`. Matching is on
+  the **end** of the object name, so a pack prefix like `LCT300095_` is ignored. New hinge
+  `outer` is the mirror image of `inner`, for box-van rear doors that swing outward.
+- **`--drop "Name,Name"`** deletes objects outright, before classification. The truck's badges
+  and number plates are **186 triangles that dragged in two materials and a 1.6 MB texture**.
+  Dropping them took it from 7 materials to 5. Decorative extras with their own material are
+  almost always a bad trade on this budget.
+- **`--nose {+x,-x,+y,-y,+z,-z}` with `--up`** reorients the model so the nose runs along
+  Blender −Y and up is +Z, which is what `export_fbx`'s fixed axis conversion assumes. It also
+  **switches the axis detection off entirely**, which is the more important half — see below.
+- **`--keep-interior`** now keeps interior meshes as *bodywork* rather than skipping the drop
+  test. It used to skip the branch, which routed `Steering_Wheel` straight into the **wheel**
+  test and gave the car a fifth wheel. Exactly the failure the DROP-before-WHEEL rule exists to
+  prevent, reintroduced by a flag.
+- **`truck` region profile** carves only the cab doors and mirrors, because everything else a
+  truck can shed already exists as an object.
+
+**`axis_order`'s "wider than it is tall" rule is FALSE for a box truck, and it fails silently
+and expensively.** The LCT 3000 is 2.84 m tall and 2.61 m wide, so height was detected as
+width. Nothing errors. What happens instead: both left and right wheels get the same corner
+name from `corner_name` and are **joined into one object**, so the car ends up with two wheels;
+`wheelRadius` comes back as **1.099 m instead of 0.356**; grounding drops the model along its
+own width; and every right-hand region hunts for its panel in the vertical, so `PartDoorR` and
+`PartMirrorR` are reported as `SKIPPED — region matched no faces`. `--length-axis` does **not**
+rescue this: it forces only the length and then re-sorts the remaining two by size, picking the
+same wrong answer. `--nose` is the fix, because after it the layout is known and not guessed.
+
+**Fit region fractions to the body's frame AT CARVE TIME, not to the raw model bounds.**
+`--keep` pulls parts out *before* the body is joined, so the bounds the regions normalise
+against are not the ones `inspect_model.py` prints. On the truck that was a 0.12 m shift, which
+was enough to slice the cab door diagonally across its front edge.
+
+**Measure geometry per-polygon, not from `bound_box`.** A probe script reading
+`ob.matrix_world @ ob.bound_box` reported `PartMirrorL` spanning 2.25 m of the truck while the
+identical region on the right side was correct. The geometry was fine both sides; the cached
+`bound_box` was stale after import. That cost a round of chasing a bug that did not exist —
+iterate `mesh.polygons` and the vertices themselves when it matters.
+
 Gotchas already paid for, do not rediscover them:
 
 - **Classify by whole name token, never substring.** `trim` contains `rim`, which quietly
@@ -1832,3 +2061,20 @@ Gotchas already paid for, do not rediscover them:
   correctly *because* of that node rotation. It is only a problem for a transform whose
   rotation code **overwrites absolutely**, which is the four wheels and nothing else. Hence
   the giveaway symptom: body correct, wheels wrong.
+
+**`wheelVisualEuler` is decided by ONE measurable fact: which local axis the wheel mesh is thin
+on. Measure it, do not reason about export conventions.** Settled 2026-08-31 by measuring all
+three split cars, after a long and useless detour trying to derive it from Blender's axis
+conversion — that argument is unresolvable from Blender alone and is not worth having again:
+
+| Car | Wheel mesh local dims | Thin on | Body length on | `wheelVisualEuler` |
+| --- | --- | --- | --- | --- |
+| E30 | 0.600 × 0.230 × 0.600 | **Y** | X | `(0, 0, -90)` |
+| P72 | 0.301 × 0.684 × 0.681 | **X** | Y | `(0, 0, 0)` |
+| LCT 3000 | 0.251 × 0.713 × 0.713 | **X** | Y | `(0, 0, 0)` |
+
+`UpdateVisual` spins about the visual's **local X**, so a mesh whose axle is already on X needs
+no correction and one authored on Y needs the −90 that rotates Y onto X. The E30 is the odd one
+out; the P72 is the proven zero-correction case, and `--nose` puts a new model onto exactly the
+P72's layout. Read the wheel's local bbox with a per-polygon probe before wiring a new car and
+the value is known in advance rather than discovered by watching wheels tumble end-over-end.

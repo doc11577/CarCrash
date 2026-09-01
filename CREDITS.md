@@ -198,3 +198,58 @@ Chosen over `snow_05`, which is patterned with **tractor tyre tracks**: they wou
 whole mountain as repeating tread marks. `snow_03` is patchy snow over dark ground with no
 directional features, which also reads better here — snow clinging to a rock face rather than a
 clean white sheet, so the mountain shows through it.
+
+---
+
+## LCT 3000 '95 — box truck
+
+- **Author:** Daniel Zhabotinsky
+- **Source:** https://sketchfab.com/3d-models/lct-3000-95-low-poly-model-663a0953c038434a918cb85725c88ffa
+- **License:** [CC Attribution 4.0](https://creativecommons.org/licenses/by/4.0/)
+- **Attribution required:** **YES.** Credit "LCT 3000 '95 by Daniel Zhabotinsky (CC-BY)"
+  in-game, on the car select screen alongside the two ROH3D cars.
+- **Location:** `Assets/Art/Vehicles/LCT3000/`
+- **Retrieved:** 2026-08-31
+
+Measured, not quoted: 18,947 tris / 11,865 verts across **27 mesh objects**, authored in
+**metres at real-world scale** — 6.02 × 2.61 × 2.84 m, so no `--scale` is needed. It is
+also already grounded, with the tyres resting within a millimetre of z = 0.
+
+**This is the first model in the project that arrives pre-split**, and it changes the job.
+Where the E30 and P72 are welded shells that had to be carved, this one ships separate
+bumpers, rear box doors (with inner panels), a full cargo-bay liner, a cab interior, the
+suspension, and all four wheels **already named per corner** as `WheelStock_FL/FR/RL/RR`.
+The artist's cuts follow the real panel gaps, which no region box can match, so they are
+kept rather than re-carved — hence `--keep` in `split_car.py`.
+
+Two objects are worth knowing about because they replace things this project normally has
+to generate:
+
+- **`Bottom` (5,772 tris)** is not just an underside. It is the full dark inner surface set:
+  cargo-bay walls, roof and floor, chassis rails, mudguards, tail-lift frame, and the cab's
+  inner shell. It is also where the **mirrors** live, which is why the truck measures 2.61 m
+  wide against a 2.18 m body.
+- **`Interior` (3,253 tris)** is a real cab interior — seats, dash, door cards.
+
+Between them they do the job `InteriorShell` exists for, with real geometry instead of a
+shrunken copy, so the truck is split with **`--no-shell`** and has no `InteriorShell` at all.
+This is exactly the "detached panels over a dark interior" the reference footage shows.
+
+Dropped on import: `Body_Badges` (26 tris) and both number plates (160 tris). Between them
+they dragged in two extra materials and a **1.6 MB** badge texture, which is not a defensible
+trade for 186 triangles nobody will read at speed. That takes the truck from 7 materials to 5.
+
+Textures were **5.2 MB** of PBR sets (dif/height/met/rough for eight materials). Reduced to
+**916 KB of base colour only**, following the E30 and P72 precedent — normal, metallic,
+roughness and height dropped entirely:
+
+| File | Source | Size |
+| --- | --- | --- |
+| `lct3000_body.png` | `Generic_bodymat_dif` 2048² | 1024² |
+| `lct3000_lights.png` | `UCB_Lights_and_Glass_Dif` 2048² | 512² |
+| `lct3000_interior.png` | `UCB_Interiors_2_Dif` 2048² | 512² |
+| `lct3000_bottom.png` | `UCB_BOTTOM_DIF` 1024² | 512² |
+| `lct3000_tire.png` | `RB1c_Tire_1k_Dif` 1024² | 512² |
+
+`lct3000-split.fbx` is derived from `Source/lct3000.fbx` by `tools/blender/split_car.py`.
+CC-BY permits modification provided attribution is kept.

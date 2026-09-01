@@ -14,10 +14,10 @@ OcclusionCullingSettings:
 RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 10
-  m_Fog: 0
-  m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
-  m_FogMode: 3
-  m_FogDensity: 0.01
+  m_Fog: 1
+  m_FogColor: {r: 0.86, g: 0.8, b: 0.68, a: 1}
+  m_FogMode: 2
+  m_FogDensity: 0.0016
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
   m_AmbientSkyColor: {r: 0.212, g: 0.227, b: 0.259, a: 1}
@@ -26,7 +26,7 @@ RenderSettings:
   m_AmbientIntensity: 1
   m_AmbientMode: 0
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: 10304, guid: 0000000000000000f000000000000000, type: 0}
+  m_SkyboxMaterial: {fileID: 2100000, guid: f211c94b8af7eb8409f083db2a219122, type: 2}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -557,12 +557,28 @@ MonoBehaviour:
   comboPerHit: 0.25
   maxMultiplier: 5
   comboRearmInterval: 0.2
+  feats:
+  - id: boat
+    title: BOAT
+    subtitle: no wheels
+    group: wheel
+    required: 0
+    bonus: 5000
+    colour: {r: 1, g: 0.96229744, b: 0, a: 1}
+  - id: mirrors
+    title: MIRROR MIRROR
+    subtitle: no mirrors
+    group: mirror
+    required: 0
+    bonus: 2000
+    colour: {r: 1, g: 0.9607843, b: 0, a: 1}
   minPopupGears: 1
   carsScoring: 0
   impactsCounted: 0
   lastGain: 0
   scoreReadout: 0
   multiplierReadout: 0
+  featsEarned: 0
 --- !u!114 &538975030
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -590,7 +606,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 36ad43215fa762e42a3ed03fad10d1ed, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TrafficSpawner
-  carPrefab: {fileID: 945304933842755612, guid: 1dfbb993b6e6361418a4f3dbea5020ab, type: 3}
+  carPrefabs:
+  - {fileID: 3685487752650632557, guid: 6bbf3141222c12f45a44e6848bc08afa, type: 3}
+  - {fileID: 945304933842755612, guid: 1dfbb993b6e6361418a4f3dbea5020ab, type: 3}
+  - {fileID: 521731838676468038, guid: f033b7f0444007643b984c2097c88c4b, type: 3}
+  mixSeed: 0
   count: 3
   grid: {fileID: 1556516901}
   lateralSpacing: 7

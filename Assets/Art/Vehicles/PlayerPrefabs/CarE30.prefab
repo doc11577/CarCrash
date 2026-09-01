@@ -280,6 +280,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 913890005381965296, guid: 5b2b999f2784b7741866c14c875f587f, type: 3}
     health: 120
     wheelIndex: -1
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -293,6 +294,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 2877463211680842686, guid: ce75b73a5c23ba8459b514f1ba8f6a7a, type: 3}
     health: 120
     wheelIndex: -1
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -306,6 +308,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 2877463211680842686, guid: ce75b73a5c23ba8459b514f1ba8f6a7a, type: 3}
     health: 120
     wheelIndex: -1
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -319,6 +322,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 2507547178003535469, guid: f53a05f757af5064fbcb5ad97312af75, type: 3}
     health: 100
     wheelIndex: -1
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -332,6 +336,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 2507547178003535469, guid: f53a05f757af5064fbcb5ad97312af75, type: 3}
     health: 100
     wheelIndex: -1
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -345,6 +350,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 7822745094170934348, guid: 9151b774b6314614b8c3675af3941346, type: 3}
     health: 160
     wheelIndex: 0
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -358,6 +364,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 7822745094170934348, guid: 9151b774b6314614b8c3675af3941346, type: 3}
     health: 160
     wheelIndex: 1
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -371,6 +378,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 7822745094170934348, guid: 9151b774b6314614b8c3675af3941346, type: 3}
     health: 160
     wheelIndex: 2
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -384,6 +392,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 7822745094170934348, guid: 9151b774b6314614b8c3675af3941346, type: 3}
     health: 160
     wheelIndex: 3
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -397,6 +406,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 0}
     health: 25
     wheelIndex: -1
+    group: mirror
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -410,6 +420,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 0}
     health: 25
     wheelIndex: -1
+    group: mirror
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}
@@ -423,6 +434,7 @@ MonoBehaviour:
     debrisPrefab: {fileID: 0}
     health: 120
     wheelIndex: -1
+    group: 
     detached: 0
     startingHealth: 0
     homeParent: {fileID: 0}

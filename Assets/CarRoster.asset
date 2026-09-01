@@ -20,6 +20,13 @@ MonoBehaviour:
     ownedFromTheStart: 1
     blurb: "1,200 kg \xB7 rear drive"
     credit: "BMW E30 1985 by ROH3D \xB7 CC BY 4.0"
+  - id: lct3000
+    displayName: LCT 3000
+    prefab: {fileID: 521731838676468038, guid: 50f4215d54e27e94f82ef47b4287d28b, type: 3}
+    price: 20000
+    ownedFromTheStart: 0
+    blurb: "3,000 kg \xB7 box truck \xB7 12 parts to lose"
+    credit: LCT 3000 '95 by Daniel Zhabotinsky (CC-BY)
   - id: p72
     displayName: De Tomaso P72
     prefab: {fileID: 2068478204062595931, guid: 6c79fa60cb511ad4c88e772ac028f6e0, type: 3}

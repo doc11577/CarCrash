@@ -27,6 +27,9 @@ PART_COLORS = {
     "PartBumperR": (0.30, 0.85, 0.85, 1.0),
     "PartMirrorL": (1.00, 0.55, 0.10, 1.0),
     "PartMirrorR": (0.60, 0.35, 0.95, 1.0),
+    # Box-van rear doors, kept from the source model rather than carved.
+    "PartBoxDoorL": (0.20, 0.85, 0.55, 1.0),
+    "PartBoxDoorR": (0.95, 0.45, 0.55, 1.0),
     "InteriorShell": (0.05, 0.05, 0.06, 1.0),
     "Body":        (0.75, 0.75, 0.78, 1.0),
 }

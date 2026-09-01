@@ -103,8 +103,14 @@ public static class UiKit
         return text;
     }
 
+    /// <param name="fontSize">
+    /// Label size. Defaults to 30, which suits a full-height button. A list that has had to
+    /// compress itself to fit passes a smaller value — a 30pt label in a 34pt button spills
+    /// out of it, which looks exactly like the clipping the compression was meant to prevent.
+    /// </param>
     public static UnityEngine.UI.Button Button(Transform parent, string label, Vector2 pos,
-                                               Vector2 box, Action onClick, bool accent = false)
+                                               Vector2 box, Action onClick, bool accent = false,
+                                               float fontSize = 30f)
     {
         GameObject go = new GameObject("Button", typeof(RectTransform));
         go.transform.SetParent(parent, false);
@@ -119,7 +125,7 @@ public static class UiKit
 
         Centre((RectTransform)go.transform, pos, box);
 
-        TextMeshProUGUI text = Text(go.transform, label, 30f, Ink,
+        TextMeshProUGUI text = Text(go.transform, label, fontSize, Ink,
                                     TextAlignmentOptions.Center, Vector2.zero, box);
         text.fontStyle = FontStyles.Bold;
 
@@ -148,6 +154,55 @@ public static class UiKit
 
         TextMeshProUGUI text = button.GetComponentInChildren<TextMeshProUGUI>();
         if (text != null) text.color = accent ? Ground : Ink;
+    }
+
+    /// <summary>
+    /// Where the rows of a growing list go, so the list cannot run off the bottom of its page.
+    /// </summary>
+    /// <remarks>
+    /// Both list pages were laid out as a fixed step from a fixed top, which is correct only
+    /// for the number of entries that happened to exist when it was written. The garage fitted
+    /// two cars and clipped on the third: the blurb, OWNED line and CC-BY credit all drew
+    /// straight through the third button. Map select has the identical bug waiting at four maps.
+    ///
+    /// A row is given a SLOT out of a fixed band. The slot is capped at the comfortable size, so
+    /// nothing moves until the list would otherwise overflow — the two-map page looks exactly as
+    /// it did — and past that point rows and their labels shrink together instead of colliding
+    /// with whatever sits underneath.
+    ///
+    /// This is not a scroll view. Past roughly eight rows the text is too small to read and a
+    /// real ScrollRect is the answer; it needs a viewport, a mask and its own raycaster, which
+    /// is not worth building for a roster this size.
+    /// </remarks>
+    /// <param name="top">Top edge of the band, in page coordinates.</param>
+    /// <param name="bottom">Bottom edge of the band. Nothing is drawn below this.</param>
+    /// <param name="count">How many rows.</param>
+    /// <param name="maxSlot">Comfortable spacing per row, and the cap.</param>
+    /// <param name="padding">Space kept clear inside each slot, above and below the row.</param>
+    public static ListBand Band(float top, float bottom, int count, float maxSlot,
+                                float padding, float maxHeight)
+    {
+        ListBand band;
+        band.slot = Mathf.Min(maxSlot, (top - bottom) / Mathf.Max(1, count));
+        band.top = top;
+        band.height = Mathf.Max(18f, Mathf.Min(maxHeight, band.slot - padding));
+        // Below about 40pt of button the default 30pt label no longer fits inside it.
+        band.fontSize = Mathf.Clamp(band.height * 0.38f, 15f, 30f);
+        return band;
+    }
+
+    public struct ListBand
+    {
+        public float top;
+        public float slot;
+        public float height;
+        public float fontSize;
+
+        /// <summary>Centre of row i.</summary>
+        public float Centre(int i) => top - slot * (i + 0.5f);
+
+        /// <summary>Bottom edge of the last row, so what follows can be placed under it.</summary>
+        public float BottomOf(int count) => top - slot * count;
     }
 
     /// <summary>A single-line text box.</summary>

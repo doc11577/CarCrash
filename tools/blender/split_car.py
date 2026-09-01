@@ -3,11 +3,17 @@
     blender --background --python tools/blender/split_car.py -- \
         --input  <model.glb|fbx|obj> \
         --output <out.fbx> \
-        [--tris 11000] [--length-axis auto] [--no-shell]
+        [--tris 11000] [--length-axis auto] [--no-shell] \
+        [--profile sedan|midengine|truck] [--nose +x --up z] \
+        [--keep Src=PartName[:hinge],...] [--drop Name,...]
 
 Why this exists: no free car pack ships doors, hood, trunk and mirrors as
 separate objects (checked Kenney, Quaternius, RgsDev, Sketchfab CC0 tags --
 they all separate wheels only). So we cut them ourselves.
+
+A model that DOES ship separate panels is better than anything we can carve, because the
+artist's cut follows the real panel gap. --keep preserves those objects as named parts and
+carving handles only what is left. The LCT 3000 truck is the first such model here.
 
 Pipeline:
   1. Import, and join every exterior mesh into one body.
@@ -32,7 +38,7 @@ import argparse
 
 import bpy
 import bmesh
-from mathutils import Vector
+from mathutils import Vector, Matrix
 
 
 # Panel regions as (min, max) fractions of the body bounding box, in
@@ -85,9 +91,37 @@ MIDENGINE_REGIONS = [
     ("PartDoorR",   (0.33, 0.58), (0.70, 1.00), (0.30, 0.82), "front", True),
 ]
 
+# A cab-over box truck (the LCT 3000) shares almost nothing with a car. Measured off the
+# model 2026-08-31: 6.02 x 2.61 x 2.84 m, cab in the front ~30% of the length, box body
+# behind it, and the box roof 0.64 m TALLER than the cab roof -- so every height fraction
+# here is a fraction of the BOX, and a saloon's 0.42 "beltline" lands under the cab floor.
+#
+# Most of a truck's detachable parts already exist as separate objects in a decent model
+# (bumpers, the box's rear doors), so they arrive through --keep and are never carved. Only
+# two things have to be cut out of the welded shell: the cab doors and the mirrors.
+# Fractions below are fitted to the Body's frame AT CARVE TIME, which is not the frame of
+# the source model: --keep pulls the bumpers out first, so the body the regions are
+# normalised against spans x +/-1.306, y +/-3.011, z 0.193..2.838. Measure that frame, do
+# not derive fractions from the raw model bounds -- an 0.12 m shift is enough to slice a
+# door diagonally.
+TRUCK_REGIONS = [
+    # Mirrors first, and the width band is strictly OUTSIDE the bodywork: the cab skin stops
+    # at x 1.130 and the mirrors reach 1.306, so 0.95 (x 1.175) is the only thing separating
+    # a mirror from a slab of cab side. The arm root stays behind with the door, which is
+    # both easier to cut and more correct -- the arm is bolted to the door.
+    ("PartMirrorL", (0.02, 0.20), (0.00, 0.05), (0.35, 0.80), "inner", False),
+    ("PartMirrorR", (0.02, 0.20), (0.95, 1.00), (0.35, 0.80), "inner", False),
+    # Cab doors. The height floor is the door sill (z 1.00), which sits just above the front
+    # wheel arch; taking it lower drags in the step and the wing. allow_glass so the side
+    # window leaves with the door, as on the saloon.
+    ("PartDoorL",   (0.085, 0.268), (0.00, 0.15), (0.305, 0.778), "front", True),
+    ("PartDoorR",   (0.085, 0.268), (0.85, 1.00), (0.305, 0.778), "front", True),
+]
+
 REGION_PROFILES = {
     "sedan": SEDAN_REGIONS,
     "midengine": MIDENGINE_REGIONS,
+    "truck": TRUCK_REGIONS,
 }
 
 # Material names containing any of these are glass. Only regions with allow_glass may
@@ -95,6 +129,23 @@ REGION_PROFILES = {
 # the boot lid -- both sit high and just behind the rear axle, so position alone cannot
 # tell them apart, but a boot lid is never made of glass.
 GLASS_HINTS = ("glass", "window", "windscreen", "windshield")
+
+# A face may be at most this many times the region's own extent before the region refuses
+# it. The region test matches a face's MEDIAN point, which says nothing about how big the
+# face is, so in principle one enormous triangle whose centre lands inside an 18 cm mirror
+# box drags its whole span out of the body with it. The risk is real on a model with uneven
+# face density -- the LCT 3000's cargo-bay liner has metre-wide flat faces sharing a mesh
+# with a finely modelled cab.
+#
+# HONEST STATUS: precautionary. It has never actually fired on any of the three cars split
+# so far. It went in while chasing a PartMirrorL that appeared to span the whole truck,
+# which turned out to be a stale Blender bound_box in the measuring script rather than bad
+# geometry -- so do not treat this as a fix for an observed bug. If it ever prints its
+# rejection line, that is new information worth looking at.
+#
+# The guard scales with the region, so a bumper region spanning the full width still accepts
+# full-width faces; only a face too big for ITS OWN region is rejected.
+FACE_SIZE_SLACK = 1.5
 
 # Objects below this many triangles are left alone by the group decimator.
 # There is nothing to reclaim from a 56-triangle wheel centre cap, and the
@@ -151,8 +202,99 @@ def parse_args():
                         "(the P72). Using the wrong one carves jagged nonsense, so look at the "
                         "preview render before believing the triangle report.")
     p.add_argument("--keep-interior", action="store_true",
-                   help="do not drop interior meshes")
+                   help="keep interior meshes as bodywork instead of dropping them. Worth it "
+                        "only when the model ships a real interior worth seeing through a "
+                        "missing door -- most car packs do not.")
+    p.add_argument("--nose", default=None,
+                   choices=["+x", "-x", "+y", "-y", "+z", "-z"],
+                   help="Which way the model's nose currently points. Setting this REORIENTS "
+                        "the model so the nose runs along Blender -Y and up is +Z, which is "
+                        "what export_fbx's fixed axis conversion assumes. Without it a model "
+                        "authored along any other axis exports rotated relative to every "
+                        "number this script prints, and the wheels need a wheelVisualEuler "
+                        "correction in Unity to roll the right way.")
+    p.add_argument("--up", default="z", choices=["x", "y", "z"],
+                   help="Which axis is up in the source model. Only used with --nose.")
+    p.add_argument("--keep", default="",
+                   help="Comma-separated Source=PartName[:hinge] list. Preserves an existing "
+                        "object as a named part instead of welding it into Body. For a model "
+                        "that already ships separate bumpers or doors this beats carving them "
+                        "out of a welded shell, because the artist's cut follows the real "
+                        "panel gap. Source matches the END of the object name, so the pack's "
+                        "prefix can be ignored. Several sources may map to one part name and "
+                        "are joined. hinge is one of none/front/rear/inner/outer.")
+    p.add_argument("--drop", default="",
+                   help="Comma-separated list of object-name tails to delete outright. For "
+                        "cutting a pack's decorative extras that carry their own material: "
+                        "the LCT 3000's badges are 26 triangles that drag in a 1.6 MB texture "
+                        "and a whole extra draw call. Matched the same way as --keep.")
     return p.parse_args(argv_after_dashes())
+
+
+def drop_by_name(tails):
+    """Delete objects whose name ends with any of these tails, before classification."""
+    if not tails:
+        return
+    for tail in tails:
+        hits = [o for o in mesh_objects() if o.name.lower().endswith(tail)]
+        if not hits:
+            print("  !! --drop: nothing matches %r" % tail)
+        for ob in hits:
+            print("  dropped %-30s %5d tris" % (ob.name, tri_count(ob)))
+            bpy.data.objects.remove(ob, do_unlink=True)
+
+
+def parse_keep(spec):
+    """Parse --keep into an ordered {PartName: (hinge, [source keys])} mapping."""
+    keep = {}
+    for entry in [e.strip() for e in spec.split(",") if e.strip()]:
+        if "=" not in entry:
+            raise SystemExit("--keep entry %r is not Source=PartName" % entry)
+        source, part = entry.split("=", 1)
+        hinge = "none"
+        if ":" in part:
+            part, hinge = part.split(":", 1)
+        if hinge not in ("none", "front", "rear", "inner", "outer"):
+            raise SystemExit("--keep entry %r has unknown hinge %r" % (entry, hinge))
+        part = part.strip()
+        keep.setdefault(part, (hinge, []))[1].append(source.strip().lower())
+    return keep
+
+
+def reorient(nose, up):
+    """Rotate the whole model so the nose runs along -Y and up is +Z.
+
+    export_fbx applies a FIXED axis conversion (-Z forward, Y up) that assumes exactly this
+    layout. A model authored any other way -- the E30 is Y-up running along X, this truck is
+    Z-up running along X -- still renders correctly in Unity, because Blender leaves the
+    conversion in the node transforms rather than the vertex data. But the mesh DATA is then
+    rotated relative to its node, and any code that writes a rotation absolutely (which is
+    CarController's wheel spin, and nothing else) puts the wheels on their sides. That is the
+    whole reason CarController.wheelVisualEuler exists.
+
+    Rotating here fixes it at source, so a model imported with --nose needs no correction:
+    wheelVisualEuler stays (0, 0, 0).
+    """
+    axes = {"x": Vector((1.0, 0.0, 0.0)),
+            "y": Vector((0.0, 1.0, 0.0)),
+            "z": Vector((0.0, 0.0, 1.0))}
+    n = axes[nose[1]] * (-1.0 if nose[0] == "-" else 1.0)
+    u = axes[up]
+    if abs(n.dot(u)) > 1e-6:
+        raise SystemExit("--nose %s and --up %s are not perpendicular" % (nose, up))
+
+    # Both frames are orthonormal and right-handed, so the source matrix inverts by
+    # transposing and the map is a pure rotation -- it can never mirror the model.
+    src = Matrix((n.cross(u), n, u)).transposed()
+    tgt_n, tgt_u = Vector((0.0, -1.0, 0.0)), Vector((0.0, 0.0, 1.0))
+    dst = Matrix((tgt_n.cross(tgt_u), tgt_n, tgt_u)).transposed()
+    m = (dst @ src.transposed()).to_4x4()
+
+    for ob in bpy.data.objects:
+        if ob.parent is None:
+            ob.matrix_world = m @ ob.matrix_world
+    bpy.context.view_layer.update()
+    print("  reoriented: nose %s -> -Y, up %s -> +Z" % (nose, up))
 
 
 def wipe_scene():
@@ -228,6 +370,48 @@ def apply_all_transforms(objs):
         return
     select_only(objs)
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+
+def extract_kept(bodies, keep, axes):
+    """Pull pre-split objects out of the body set and rename them as parts.
+
+    A model that already ships separate bumpers or doors has them cut along the real panel
+    gap, which is strictly better than any region box we could draw -- region carving is a
+    fallback for welded meshes, not the goal. Matching is on the END of the object name so a
+    pack prefix like `LCT300095_` can be ignored, and it is an exact tail match rather than a
+    substring test, because substring matching is how `trim` ended up in the wheel bucket.
+
+    Returns (kept_objects, remaining_bodies).
+    """
+    if not keep:
+        return [], bodies
+
+    remaining = list(bodies)
+    kept = []
+    for part, (hinge, sources) in keep.items():
+        matched = []
+        for key in sources:
+            hits = [o for o in remaining if o.name.lower().endswith(key)]
+            if not hits:
+                print("  !! --keep %s: nothing matches %r" % (part, key))
+            matched.extend(hits)
+        if not matched:
+            continue
+        for o in matched:
+            remaining.remove(o)
+
+        select_only(matched)
+        if len(matched) > 1:
+            bpy.ops.object.join()
+        ob = bpy.context.view_layer.objects.active
+        ob.name = part
+        ob.data.name = part + "Mesh"
+        set_hinge_origin(ob, hinge, axes)
+        kept.append(ob)
+        print("  %-14s kept from %d object(s) -> %5d tris, hinge=%s"
+              % (part, len(matched), tri_count(ob), hinge))
+
+    return kept, remaining
 
 
 def join_body(bodies):
@@ -618,14 +802,30 @@ def report_unity_setup(body, wheels, axes, travel=0.30, panels=None):
         print("    %s" % (slot.name if slot else "None"))
 
 
-def axis_order(ob, forced):
+def union_dims(objs):
+    """World-axis bounding-box dimensions spanning a set of objects.
+
+    The axes have to be known BEFORE the body is joined, because --keep needs them to pick
+    a hinge edge, so they cannot be read off a single joined object any more.
+    """
+    lo = Vector((1e18, 1e18, 1e18))
+    hi = Vector((-1e18, -1e18, -1e18))
+    for ob in objs:
+        olo, ohi = world_bounds(ob)
+        for i in range(3):
+            lo[i] = min(lo[i], olo[i])
+            hi[i] = max(hi[i], ohi[i])
+    return [hi[i] - lo[i] for i in range(3)]
+
+
+def axis_order(dims, forced):
     """Return (length, width, height) as axis indices 0/1/2.
 
     Cars are longer than they are wide, and wider than they are tall. That
     ordering is stable enough to detect automatically, which matters because
     glTF and FBX disagree about which way is up.
     """
-    d = list(ob.dimensions)
+    d = list(dims)
     order = sorted(range(3), key=lambda i: d[i], reverse=True)
     length, width, height = order[0], order[1], order[2]
     if forced != "auto":
@@ -671,19 +871,32 @@ def carve(body, region, axes, lo, hi):
     bm = bmesh.from_edit_mesh(body.data)
     bm.faces.ensure_lookup_table()
 
+    # Largest face this region will accept, per axis. See FACE_SIZE_SLACK.
+    limit = [0.0, 0.0, 0.0]
+    for axis, rng in ((la, lr), (wa, wr), (ha, hr)):
+        limit[axis] = (rng[1] - rng[0]) * (hi[axis] - lo[axis]) * FACE_SIZE_SLACK
+
     hit = 0
+    oversized = 0
     for f in bm.faces:
         f.select = False
     for f in bm.faces:
         if not allow_glass and f.material_index in glass_slots:
             continue
         n = normalise(f.calc_center_median(), lo, hi)
-        if (lr[0] <= n[la] <= lr[1] and
+        if not (lr[0] <= n[la] <= lr[1] and
                 wr[0] <= n[wa] <= wr[1] and
                 hr[0] <= n[ha] <= hr[1]):
-            f.select = True
-            hit += 1
+            continue
+        co = [v.co for v in f.verts]
+        if any(max(c[i] for c in co) - min(c[i] for c in co) > limit[i] for i in range(3)):
+            oversized += 1
+            continue
+        f.select = True
+        hit += 1
     bmesh.update_edit_mesh(body.data)
+    if oversized:
+        print("  %-12s rejected %d face(s) too big for the region" % (name, oversized))
 
     if hit == 0:
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -731,6 +944,11 @@ def set_hinge_origin(ob, hinge, axes):
     elif hinge == "inner":
         # mirrors hinge against the body, i.e. toward the car centreline
         point[wa] = hi[wa] if centre[wa] < 0 else lo[wa]
+    elif hinge == "outer":
+        # A box van's rear doors are the mirror image of a mirror: they hinge on the
+        # OUTBOARD edge and swing out, so the pivot is the corner of the body, away
+        # from the centreline. Hinging them inboard swings them into each other.
+        point[wa] = lo[wa] if centre[wa] < 0 else hi[wa]
 
     world = ob.matrix_world @ point
     prev = tuple(bpy.context.scene.cursor.location)
@@ -813,17 +1031,25 @@ def main():
     wipe_scene()
     load(args.input)
     scale_scene(args.scale)
+    if args.nose:
+        reorient(args.nose, args.up)
 
     meshes = mesh_objects()
     if not meshes:
         raise SystemExit("no mesh objects in input")
 
+    keep = parse_keep(args.keep)
+    drop_by_name([t.strip().lower() for t in args.drop.split(",") if t.strip()])
+
+    meshes = mesh_objects()
     wheels, bodies, dropped = [], [], []
     for ob in meshes:
-        # Drop is checked first: "steering_centre" is dashboard trim, not a
-        # wheel centre cap, and the wheel test would otherwise claim it.
-        if not args.keep_interior and name_matches(ob, DROP_TOKENS):
-            dropped.append(ob)
+        # Drop is checked first: "steering_centre" is dashboard trim, not a wheel centre
+        # cap, and the wheel test would otherwise claim it. --keep-interior must NOT skip
+        # this branch, only change its outcome -- routing an interior mesh past the drop
+        # test and into the wheel test is how `Steering_Wheel` became a fifth wheel.
+        if name_matches(ob, DROP_TOKENS):
+            (bodies if args.keep_interior else dropped).append(ob)
         elif name_matches(ob, WHEEL_TOKENS):
             wheels.append(ob)
         else:
@@ -848,15 +1074,39 @@ def main():
         bpy.data.objects.remove(ob, do_unlink=True)
 
     apply_all_transforms(bodies + wheels)
+
+    # Axes come from the whole car, before anything is pulled out or joined. Reading them
+    # off the joined body instead would make them depend on what --keep removed.
+    #
+    # After --nose the layout is KNOWN, so it must not be guessed. axis_order's rule is
+    # "longer than wide, wider than tall", and the second half of that is simply false for a
+    # box truck: this one is 2.84 m tall and 2.61 m wide, so height was detected as width.
+    # Nothing errors -- it fails silently and expensively. Both left wheels and both right
+    # wheels get the same corner name and are JOINED into one object, wheelRadius comes back
+    # as 1.099 m instead of 0.355, grounding drops the truck along its own width, and every
+    # right-hand region looks for its panel in the vertical. Detect only when asked to.
+    axes = ((1, 0, 2) if args.nose
+            else axis_order(union_dims(bodies + wheels), args.length_axis))
+    if args.nose:
+        print("  axes: length=y width=x height=z (fixed by --nose, not detected)")
+
+    if keep:
+        print("  --- keeping pre-split parts ---")
+    kept, bodies = extract_kept(bodies, keep, axes)
+    if not bodies:
+        raise SystemExit("--keep claimed every body mesh; nothing left to be the Body")
     body = join_body(bodies)
 
-    # The body is what the camera sees, so it gets most of the budget. Four
-    # wheels share the rest -- they are small on screen and mostly spinning.
-    body_budget = int(args.tris * 0.7)
-    decimate_to(body, body_budget)
-    decimate_group(wheels, int(args.tris * 0.3), "wheels")
+    # The body is what the camera sees, so it gets most of the budget. Four wheels share
+    # the rest -- they are small on screen and mostly spinning. Kept parts need their own
+    # share: they are excluded from both groups, so without one they escape decimation
+    # entirely and the triangle budget silently overruns by however big they are.
+    body_share, wheel_share = (0.55, 0.25) if kept else (0.70, 0.30)
+    decimate_to(body, int(args.tris * body_share))
+    decimate_group(wheels, int(args.tris * wheel_share), "wheels")
+    if kept:
+        decimate_group(kept, int(args.tris * 0.20), "kept parts")
 
-    axes = axis_order(body, args.length_axis)
     sanity_check_size(body)
 
     print("  --- wheels ---")
