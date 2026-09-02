@@ -40,7 +40,7 @@ CC-BY permits modification provided attribution is kept.
 
 ---
 
-## Car Kit (v3.1)
+## Car Kit (v3.1) — debris only
 
 - **Author:** Kenney — https://kenney.nl
 - **Source:** https://kenney.nl/assets/car-kit
@@ -48,51 +48,42 @@ CC-BY permits modification provided attribution is kept.
 - **Attribution required:** No. Credited here voluntarily.
 - **Location:** `Assets/Art/Vehicles/`
 
-Subset in use: 10 vehicle bodies, 3 wheel styles, 14 debris pieces, and the shared
-`colormap.png` texture atlas.
+**Trimmed to four models on 2026-09-02.** Only `debris-bumper`, `debris-door`,
+`debris-plate-small-a` and `debris-tire` remain, plus the shared `colormap.png` atlas — those
+are what the `Debries/` prefabs spawn as generic panel props. The ten vehicle bodies, three
+wheel styles and ten other debris pieces were deleted: nothing had referenced them since the
+player car became the split E30 and traffic moved onto the same real prefabs.
 
-Structure notes, measured from the source meshes rather than the pack description:
+Structure notes, measured from the source meshes rather than the pack description, kept because
+they explain why the kit is used the way it is:
 
-- Each vehicle is a welded `body` mesh plus four separate `wheel-*` nodes. Wheels detach
-  for free; **doors, hood and bumpers are not separate geometry.**
-- The `debris-*` models are standalone generic props (door, bumper, tire, spoiler, plates,
-  drivetrain, bolts). Panel detachment is faked by spawning these rather than by removing
-  geometry from the body.
-- Every vehicle and debris piece shares the single `colormap` material, so the whole
-  vehicle roster batches together and adding another car costs no extra texture memory.
-- `sedan.glb` reference dimensions at import scale 1.0: body 1.50 × 1.15 × 2.54 m,
-  wheels radius 0.30 m at local (±0.30, 0.30, ±0.66). 3,184 verts total, 1,072 in the body.
+- Each vehicle was a welded `body` mesh plus four separate `wheel-*` nodes. Wheels detach
+  for free; **doors, hood and bumpers are not separate geometry.** That is the whole reason
+  `tools/blender/split_car.py` exists.
+- The `debris-*` models are standalone generic props. Traffic still fakes panel detachment by
+  spawning these rather than by removing geometry from the body — see `CarDamage.debrisPrefab`.
+- Everything shares the single `colormap` material, so the debris batches with itself and costs
+  no extra texture memory.
+- Kenney meshes import at **Scale Factor 1.6**; the split cars are 1.0. Mixing the two up
+  spawns debris at the wrong size.
 
 ---
 
-## Low Poly Cars (free tier)
+## Low Poly Cars (free tier) — REMOVED 2026-09-02
 
 - **Author:** Cosmo — https://cosmo-art.itch.io
 - **Source:** https://cosmo-art.itch.io/low-poly-cars
 - **License:** [CC0 1.0 Universal](http://creativecommons.org/publicdomain/zero/1.0/) (public domain)
-- **Attribution required:** No. Credited here voluntarily.
-- **Location:** `Assets/Art/Vehicles/CosmoCars/`
-- **Retrieved:** 2026-08-29 (pack published 2024-10-20)
 
-The free tier is 12 vehicles: `armor, coupe, fenyr, ghini, italia, jeep, kamaro, lamb,
-mobil, police, rally, van`. The 11-car premium tier was **not** bought and is not in the repo.
+**Deleted from the repo.** The 12 free-tier vehicles and `coupe-split.fbx` were imported
+2026-08-29 as candidate player cars, then superseded the same day by the BMW E30, which reads as
+more realistic. Nothing referenced any of them afterwards, so they shipped in no build and were
+removed during the 2026-09-02 cleanup.
 
-Chosen over Kenney for the **player car** because the proportions are realistic rather than
-toy-like, which is what the reference footage looks like. Measured, not quoted:
-
-- `coupe`: body 1,010 tris / 1,599 verts, 5.14 × 2.35 × 1.50 m. Four separate wheel objects
-  at 320 tris each. **2,290 tris complete.**
-- `police`: body 1,102 tris, 5.72 m. Same four-wheel split.
-- Authored at **real-world scale**, so Unity import Scale Factor is **1.0** — *not* the 1.6
-  the Kenney kit needs. Mixing the two up will spawn debris at the wrong size.
-- Every vehicle shares one `texture-palette.png` (1000 × 720, 8.6 KB), so the whole pack
-  batches and colour comes from UVs pointing at palette swatches rather than per-car
-  textures. Same property that makes the Kenney roster affordable.
-- Body materials are `metallic / light / glass / texture`; wheels are `metallic / texture`.
-
-`coupe-split.fbx` is derived from `Source/coupe.fbx` by `tools/blender/split_car.py` — see
-CLAUDE.md. CC0 permits modification and redistribution without restriction.
-
+Recorded rather than deleted outright because the reasoning is still useful: the pack was picked
+over Kenney's for **proportion, not triangle count** — proper greenhouse, thin pillars, correctly
+sized wheels — which is the same judgement that later chose the E30. CC0, so no obligation
+survives their removal.
 ---
 
 ## TextMesh Pro essential resources

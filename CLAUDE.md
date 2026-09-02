@@ -310,6 +310,93 @@ Sketch of the work: a chunking step in `publish.sh` that cuts any `prod/` file o
 `embed.html` already has the bar and the on-screen error pane, so it is a modest change to a
 file that is already hand-written for this job.
 
+### Unused-asset cleanup — 2026-09-02, and the check that made it safe
+
+Removed 89 files: the whole **CosmoCars** pack (12 vehicles + `coupe-split.fbx`, superseded by
+the E30 the same day it was imported and referenced by nothing since) and **20 loose Kenney
+FBXs** — the ten vehicle bodies, three wheel styles and ten debris pieces nothing pointed at.
+2.76 MB off the repo.
+
+**It does NOT shrink the download.** Unity already excludes unreferenced assets from a build, so
+this is clone time, import time and Inspector clutter. **The font is the one that actually
+ships**, because `Resources/` is force-included — see the trim section above. Do not confuse the
+two: deleting art feels productive and moves the download number not at all.
+
+**A flat "is this GUID mentioned anywhere" grep is NOT a safe test, and it says the opposite of
+the truth in both directions.** Two ways it lies:
+
+- **An unused asset referencing another makes the second look used.** `texture-palette.png`
+  appeared referenced — by CosmoCars' own materials, which are themselves dead. The test has to
+  be REACHABILITY from the build-list scenes, walked transitively, not mere mention.
+- **⚠ AND REACHABILITY MISSES EMBEDDED-MATERIAL MODELS, WHICH IS THE DANGEROUS DIRECTION.**
+  Every FBX in this project imports with `materialLocation: 1` (Use Embedded Materials) and
+  `materialSearch: 1`, with `externalObjects: {}`. That means **Unity binds their textures BY
+  FILENAME at import time — there is no GUID reference to find.** The walk reported all 21
+  CanyonTrack textures as unreachable. Deleting them would have silently untextured The Dam.
+
+  The same applies to Everest, Quarry01 and all four split car FBXs. **Before deleting any
+  texture, check whether an embedded-material model in the same folder wants it by name:**
+
+  ```bash
+  grep -l 'materialLocation: 1' $(find Assets -name '*.fbx.meta' -o -name '*.obj.meta')
+  ```
+
+What was deliberately KEPT:
+
+- **`Source/` folders** (`aventador.fbx`, `e30-FullBody.obj`, `FullBody.obj`, `lct3000.fbx`,
+  `glendam.fbx`). Unreferenced and they do not ship, but they are the inputs `split_car.py` needs
+  to regenerate a car. Gitignore them if clone time ever matters; do not delete them.
+- **Four Kenney debris models** — `debris-bumper`, `debris-door`, `debris-plate-small-a`,
+  `debris-tire` — reached through the `Debries/` prefabs, which traffic still spawns.
+- **All CanyonTrack textures**, for the name-binding reason above.
+
+**Found while doing this and NOT fixed: `TrafficAventador.prefab` is an orphan.** It exists,
+it is wired, and no scene's `TrafficSpawner.carPrefabs` lists it — so the Aventador never appears
+in traffic on any map. Left alone because that is a design call, not a cleanup one.
+
+### The TMP font trim — the character set is DERIVED, do not guess it
+
+**`LiberationSans SDF.asset` is 2.15 MB and ships in every build** whether or not anything uses
+it, because everything under a `Resources/` folder is force-included. The game draws digits, a
+few words and some part names. A trimmed asset is roughly 100 KB.
+
+**The whole game needs ASCII plus TWO other characters. Measured 2026-09-02, not estimated** —
+every string literal in the UI scripts, plus `CarRoster.asset` and all five scenes, was scanned
+for anything above U+007F:
+
+| Character | Codepoint | Where |
+| --- | --- | --- |
+| `·` | **U+00B7** | separators — "0 gears banked · best run 0", the patch-note bullets |
+| `—` | **U+2014** | em dash — "New map — Bullseye", most menu subtitles |
+
+Everything else in the roster, the scenes and the UI is plain ASCII. **Font Asset Creator custom
+range: `32-126,183,8212`.**
+
+Steps, once:
+
+1. **Window → TextMesh Pro → Font Asset Creator.**
+2. **Source Font File:** `Assets/TextMesh Pro/Fonts/LiberationSans.ttf`.
+3. **Sampling Point Size:** Auto Sizing. **Padding:** 5. **Packing Method:** Optimum.
+4. **Atlas Resolution:** 512 × 512 — ample for ~97 glyphs, and it is the atlas that costs the MB.
+5. **Character Set:** Custom Range. **Sequence:** `32-126,183,8212`.
+6. **Render Mode:** SDFAA. **Get Kerning Pairs:** off.
+7. **Generate Font Atlas**, then **Save as** → `Assets/Art/Fonts/GameFont SDF.asset`.
+   **Save it OUTSIDE any `Resources/` folder** — the point is to stop force-inclusion. Referenced
+   assets still ship; it is unreferenced ones in `Resources/` that are the waste.
+8. **Select `Assets/TextMesh Pro/Resources/TMP Settings.asset`** and set **Default Font Asset**
+   to the new `GameFont SDF`.
+9. **Delete `Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset`** and its
+   `- Fallback` sibling.
+10. Play the menu. Every label should look identical.
+
+**Nothing but TMP's own settings references the stock asset** — checked by GUID across every
+scene, prefab and asset, 2026-09-02 — so step 8 is genuinely all the rewiring there is. The HUD
+and menu are built in code and take `TMP_Settings.defaultFontAsset` implicitly.
+
+**If a character goes missing it renders as a blank box, not as an error.** Re-run the scan
+before assuming the range is still right — any new UI string with a `°`, `×`, `→` or a curly
+quote adds a codepoint, and the failure is silent.
+
 ### Web player settings (verified on disk)
 
 `webGLDecompressionFallback: 1`, `webGLMaximumMemorySize: 512`, `webWasm2023: 1`,
