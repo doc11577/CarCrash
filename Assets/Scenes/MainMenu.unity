@@ -283,7 +283,7 @@ MonoBehaviour:
   podiumColour: {r: 0, g: 0, b: 0, a: 1}
   spinSpeed: 18
   settleTime: 0.45
-  backdropShader: {fileID: 0}
+  backdropShader: {fileID: 4800000, guid: c3189b56003635740ac58685fc0408de, type: 3}
   backdropBase: {r: 0.012, g: 0.011, b: 0.015, a: 1}
   backdropAccent: {r: 1, g: 0.78, b: 0.15, a: 1}
   backdropIdle: {r: 0.105, g: 0.11, b: 0.125, a: 1}

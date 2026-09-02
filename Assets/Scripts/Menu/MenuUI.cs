@@ -90,7 +90,6 @@ public class MenuUI : MonoBehaviour
     GameObject shownPrefab;
     TMP_InputField devField;
     TextMeshProUGUI devStatus;
-    TextMeshProUGUI fullscreenLabel;
     TextMeshProUGUI mainStatus;
     UnityEngine.UI.Button resetButton;
     TextMeshProUGUI resetLabel;
@@ -375,18 +374,11 @@ public class MenuUI : MonoBehaviour
                                TextAlignmentOptions.Center, new Vector2(0f, -288f),
                                new Vector2(1000f, 28f));
 
-        fullscreenLabel = UiKit.Button(page.transform, Fullscreen.Label,
-                                       new Vector2(0f, -150f), new Vector2(440f, 60f),
-                                       () =>
-                                       {
-                                           Fullscreen.Toggle();
-                                           // Relabelled on the NEXT frame would be
-                                           // cleaner, but the browser applies the
-                                           // change synchronously enough that reading
-                                           // it straight back is right in practice.
-                                           RefreshFullscreenLabel();
-                                       })
-                                  .GetComponentInChildren<TextMeshProUGUI>();
+        // No fullscreen button. Removed 2026-09-02 after it was confirmed dead on the live
+        // site: the game sits two iframes deep in Google Sites and we do not control the
+        // outer one, so if it was not granted fullscreen the request is refused however the
+        // game asks. A control that cannot work reads as a bug — the Chromebook fullscreen
+        // key does the job and nothing can block it. See Fullscreen.cs, kept but unused.
 
         UiKit.Button(page.transform, "BACK", new Vector2(0f, -380f), new Vector2(280f, 62f),
                      () => Show(Page.Main));
@@ -410,11 +402,6 @@ public class MenuUI : MonoBehaviour
 
         RefreshDev();
         RefreshCars();
-    }
-
-    void RefreshFullscreenLabel()
-    {
-        if (fullscreenLabel != null) fullscreenLabel.text = Fullscreen.Label;
     }
 
     void RefreshDev()

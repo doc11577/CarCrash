@@ -39,13 +39,6 @@
     background: #300; color: #fdd; padding: 16px;
     font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap;
   }
-  #fs {
-    position: absolute; bottom: 6px; left: 10px;
-    background: rgba(0,0,0,.45); color: #ddd; border: 1px solid #555;
-    border-radius: 4px; padding: 4px 9px; cursor: pointer;
-    font: 12px system-ui, sans-serif;
-  }
-  #fs:hover { background: rgba(0,0,0,.75); color: #fff; }
   #hint {
     position: absolute; bottom: 6px; right: 10px;
     color: #888; font: 11px system-ui, sans-serif; pointer-events: none;
@@ -62,7 +55,6 @@
   </div>
 
   <div id="err"></div>
-  <button id="fs" type="button">&#9974; Fullscreen</button>
   <div id="hint">click to focus &middot; WASD / arrows</div>
 </div>
 
@@ -107,50 +99,10 @@
     canvas.focus();
   }
 
-  // ---- fullscreen -------------------------------------------------------
-  // Done HERE rather than only in Unity because this is the layer that can
-  // tell the player WHY it failed. Google Sites nests this page in an iframe
-  // we do not control, and if that iframe was not granted fullscreen the
-  // request is refused no matter what the game does.
-  //
-  // Requesting on #wrap rather than the canvas keeps the loading bar and the
-  // error pane inside the fullscreen view, so a crash while fullscreen is
-  // still readable.
-  var wrap = document.querySelector("#wrap");
-  var fsBtn = document.querySelector("#fs");
-
-  function fsActive() {
-    return document.fullscreenElement || document.webkitFullscreenElement;
-  }
-
-  function paintFs() {
-    fsBtn.innerHTML = fsActive() ? "&#9974; Exit fullscreen" : "&#9974; Fullscreen";
-  }
-
-  if (!document.fullscreenEnabled && !document.webkitFullscreenEnabled) {
-    // The embedding page has not allowed it. Say so instead of leaving a
-    // button that does nothing, and point at the key that always works.
-    fsBtn.textContent = "Fullscreen blocked — use the Chromebook fullscreen key";
-    fsBtn.disabled = true;
-    fsBtn.style.cursor = "default";
-  } else {
-    fsBtn.addEventListener("click", function () {
-      var target = fsActive() ? null : wrap;
-      var done;
-      if (target) {
-        done = (target.requestFullscreen || target.webkitRequestFullscreen).call(target);
-      } else {
-        done = (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-      }
-      Promise.resolve(done).catch(function () {
-        fsBtn.textContent = "Fullscreen refused by the page";
-      });
-      // Keyboard dies if focus leaves the canvas, and the button just took it.
-      setTimeout(function () { canvas.focus(); }, 50);
-    });
-    document.addEventListener("fullscreenchange", paintFs);
-    document.addEventListener("webkitfullscreenchange", paintFs);
-  }
+  // No fullscreen button. Removed 2026-09-02: confirmed dead on the live site.
+  // Google Sites nests this page two iframes deep and we do not control the outer
+  // one, so if it was not granted fullscreen the request is refused however it is
+  // asked. The Chromebook fullscreen key does the job and nothing can block it.
 
   canvas.addEventListener("pointerdown", grabFocus);
   canvas.addEventListener("touchstart", grabFocus, { passive: true });

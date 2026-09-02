@@ -34,7 +34,6 @@ public class PauseMenu : MonoBehaviour
     RectTransform root;
     GameObject panel;
     CarInput car;
-    TextMeshProUGUI fullscreenLabel;
     float armedAt;
 
     void Awake()
@@ -63,15 +62,8 @@ public class PauseMenu : MonoBehaviour
         UiKit.Button(panel.transform, "RETURN TO MENU", new Vector2(0f, -60f),
                      new Vector2(420f, 74f), ReturnToMenu);
 
-        fullscreenLabel = UiKit.Button(panel.transform, Fullscreen.Label,
-                                       new Vector2(0f, -142f), new Vector2(420f, 58f),
-                                       () =>
-                                       {
-                                           Fullscreen.Toggle();
-                                           if (fullscreenLabel != null)
-                                               fullscreenLabel.text = Fullscreen.Label;
-                                       })
-                                  .GetComponentInChildren<TextMeshProUGUI>();
+        // No fullscreen button — see MenuUI. It cannot work inside Google Sites' nested
+        // iframes, and a dead control reads as a bug.
 
         UiKit.Text(panel.transform, "TAB to resume  ·  R to restart the run",
                    24f, UiKit.Muted, TextAlignmentOptions.Center,

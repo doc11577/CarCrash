@@ -734,7 +734,7 @@ Chromebook before treating any of this as settled.
 | `Game/CarRoster.cs` | ScriptableObject: every car, its price and prefab. Shared by menu and spawner. |
 | `Game/PlayerCarSpawner.cs` | Spawns the car the player owns and selected. |
 | `Game/DevMode.cs` | Code-gated dev mode: gears, car tuner, perf readout. |
-| `Menu/Fullscreen.cs` | Fullscreen toggle. The reliable control is in `tools/embed.html`. |
+| `Menu/Fullscreen.cs` | **Unused since 2026-09-02.** Fullscreen cannot work inside Google Sites' nested iframes; every button was removed. Kept only to document that. |
 | `Debug/PerfReadout.cs` | On-screen FPS/device readout. Only drawn in dev mode. |
 
 ### Changing a default in C# does NOT change a component already in the scene
@@ -1671,7 +1671,33 @@ damper, anti-roll, steer angle) and the **`PerfReadout`**, which otherwise has n
 corner of a shipped build. Tuner changes apply on resume and are **not persisted** — a restart
 restores the prefab, which is what makes experimenting safe.
 
-#### Fullscreen has two controls, and the reliable one is in the HTML
+#### Fullscreen is GONE — removed 2026-09-02
+
+Confirmed dead on the live site: the button rendered as
+`Fullscreen blocked — use the Chromebook fullscreen key`, which is the disabled state
+`tools/embed.html` falls back to when `document.fullscreenEnabled` is false.
+
+**It was never going to work.** Google Sites nests the game TWO iframes deep and we control
+neither outer frame. A frame that was not granted fullscreen refuses the request however it is
+asked, so `Screen.fullScreen` from Unity and `requestFullscreen` from the page fail identically.
+Detecting it and saying so was the right call at the time, but a permanently disabled control is
+still a dead control, and this project's own rule — the garage action button changes MEANING
+rather than greying out — says a dead button reads as a bug.
+
+Removed from all three places it existed:
+
+- `tools/embed.html` — the button, its CSS and the whole fullscreen block (193 → 145 lines)
+- `MenuUI.cs` — the FULLSCREEN button on the Options page
+- `PauseMenu.cs` — the FULLSCREEN button on the pause screen
+
+`Menu/Fullscreen.cs` is KEPT but is now referenced by nothing. It costs nothing in the build
+(managed stripping is High) and documents the decision. Delete it only if a native build ever
+happens, where fullscreen would genuinely work.
+
+**The Chromebook fullscreen key does the job and nothing can block it.** That is the answer to
+give a player who asks.
+
+#### ~~Fullscreen has two controls, and the reliable one is in the HTML~~ — SUPERSEDED, see above
 
 `Screen.fullScreen` from the game obeys the browser Fullscreen API, which refuses anything not
 triggered by a real user gesture — hence buttons only, never automatic.
@@ -2074,6 +2100,34 @@ rotating podium, cycled with `<` `>`**, over an animated backdrop. `Menu/CarPodi
   action button changes meaning rather than greying out.
 - **All of it runs on unscaled time**, because the menu is reachable from a run paused at
   `timeScale 0` and a podium that stops turning there looks broken.
+
+**⚠ `Shader.Find` FAILED IN THE BUILD AND WORKED PERFECTLY IN THE EDITOR — 2026-09-02.** Shipped
+in Update 2: the garage, and every other menu page, showed the SKYBOX instead of the backdrop.
+
+**A shader only reaches a build if something at BUILD TIME depends on it** — a material in a
+scene or in `Resources/`, or an entry in Always Included Shaders. `CarPodium` builds its material
+at RUNTIME (`new Material(Shader.Find("CarCrash/Garage Backdrop"))`), so nothing referenced the
+shader when the build was made, Unity stripped it, and `Shader.Find` returned null. In the Editor
+every shader in the project is loaded, so `Shader.Find` always succeeds there and the bug cannot
+be reproduced by playing the scene.
+
+The component already logged `"Garage Backdrop shader not found, so the background will be
+whatever the camera clears to"` — which is exactly what was on screen, and which nobody sees
+because **there is no console on a Chromebook**. That is the same reason `tools/embed.html` has
+an on-screen error pane.
+
+Fixed twice over, deliberately:
+
+- **`backdropShader` is now assigned in `MainMenu.unity`** (it was `{fileID: 0}`). A serialized
+  reference is a real build dependency, so the shader cannot be stripped. This is the fix that
+  matters.
+- **Added to Project Settings → Graphics → Always Included Shaders**, so `Shader.Find` also works
+  from any future scene that has no wired reference.
+
+**The general rule: anything created with `new Material(Shader.Find(...))` at runtime needs one
+of those two, or it works in the Editor and is invisible in the build.** `CarPodium` also does
+`Shader.Find("Universal Render Pipeline/Lit")` for the podium — that one survives only because
+URP materials in the scenes already pull Lit in, which is luck rather than design.
 
 The backdrop shader is fragment maths on one quad. **No textures, no particles, no post FX,
 nothing that touches the download**, which matters with the data file at 14.83 MB against a 20 MB
