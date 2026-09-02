@@ -421,7 +421,7 @@ MonoBehaviour:
   frontGrip: 0.85
   rearGrip: 0.75
   handbrakeGrip: 0.18
-  maxGripForce: 14000
+  maxGripForce: 26000
   centreOfMassOffset: {x: 0, y: -0.6, z: 0}
   downforce: 0.9
   airControlTorque: 9000

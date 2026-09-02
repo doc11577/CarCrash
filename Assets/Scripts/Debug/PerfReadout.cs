@@ -45,6 +45,11 @@ public class PerfReadout : MonoBehaviour
             $"{SystemInfo.graphicsDeviceName}\n" +
             $"{SystemInfo.processorCount} cores / {SystemInfo.systemMemorySize} MB";
 
+        // Live rigidbody count, because that is the thing most likely to cost the frame budget
+        // and it cannot be read from the Inspector on the device the budget is about.
+        int boulders = FallingBoulders.Live;
+        if (boulders > 0) readout += $"\n{boulders} boulders live";
+
         if (car != null)
             readout += $"\n{car.Speed * 3.6f:F0} km/h   {(car.Grounded ? "grounded" : "airborne")}";
 

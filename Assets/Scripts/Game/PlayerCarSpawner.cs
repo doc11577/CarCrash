@@ -82,6 +82,11 @@ public class PlayerCarSpawner : MonoBehaviour
                                      at.rotation);
         car.name = entry.displayName;
         spawnedCar = entry.id;
+
+        // Put any saved dev tuning back. Applied HERE rather than in CarController.Awake so the
+        // car itself stays free of any notion of saved state — the spawner is the one thing that
+        // knows which roster entry this is, and its id is the key the values are stored under.
+        CarTuning.Apply(car.GetComponent<CarController>(), entry.id);
     }
 
     void OnDestroy()

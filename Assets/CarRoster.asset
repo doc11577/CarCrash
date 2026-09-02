@@ -34,3 +34,10 @@ MonoBehaviour:
     ownedFromTheStart: 0
     blurb: "Mid-engine \xB7 44 m/s"
     credit: "De Tomaso P72 by ROH3D \xB7 CC BY 4.0"
+  - id: aventador
+    displayName: Lamborghini Aventador
+    prefab: {fileID: 2068478204062595931, guid: 833028879463e654595f4c31cd3e42d5, type: 3}
+    price: 100000
+    ownedFromTheStart: 0
+    blurb: "1,250 kg \xB7 116 mph \xB7 mid-engine V12"
+    credit: Lamborghini Aventador by Arion Digital (CC-BY)

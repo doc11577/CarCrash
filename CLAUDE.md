@@ -31,7 +31,10 @@ pass at the end.
 
 Standing budget:
 
-- **60 FPS target, 30 FPS floor** on integrated graphics at 720p
+- **60 FPS target, 30 FPS floor** on integrated graphics at 720p — **met, measured 2026-09-01
+  on Jasper Lake Intel UHD at 1041×670, both maps, ~1 ms of frame jitter.** See the measured
+  section for what that does and does not license. Memory is NOT the scarce resource it was
+  assumed to be here (154 MB of a 512 MB heap); the download cap is.
 - **Draw calls:** keep low; batch and atlas aggressively. Static geometry must be marked static.
 - **Triangles:** low-poly on purpose. The art style is the optimization.
 - **Textures:** small, atlased, crunch-compressed. No 2K textures anywhere.
@@ -155,32 +158,108 @@ is a generic CDN that filters don't block. There is no trick beyond that.
 
 **Test the full pipeline on a real school Chromebook before building anything worth losing.**
 
-### Build size — measured 2026-08-30
+### Build size — measured 2026-09-02, Update 2
 
-Brotli, **14.96 MB** total download. Commit `f87f071`, the first real build: scoring, Quarry01,
-traffic AI, the front end, the garage, dev mode and fullscreen.
+Brotli, **25.04 MB** total download, **18.20 MB** in the data file. Two new maps (Bullseye, The
+Dam), the Aventador, falling boulders, airtime scoring, the podium garage and the turning fix.
 
-| File | 2026-08-30 | Smoke test 2026-08-27 | Change |
-| --- | --- | --- | --- |
-| `carcrash.data.unityweb` | **8.15 MB** | 3.71 MB | **+120%** |
-| `carcrash.wasm.unityweb` | 6.63 MB | 6.49 MB | +2% |
-| `carcrash.framework.js.unityweb` | 0.07 MB | 0.07 MB | — |
-| `carcrash.loader.js` | 0.11 MB | 0.11 MB | — |
-| **Total** | **14.96 MB** | 10.4 MB | **+44%** |
+| File | Update 2 (09-02) | Update 1 (08-31) | First build (08-30) | Change this release |
+| --- | --- | --- | --- | --- |
+| `carcrash.data.unityweb` | **18.20 MB** | 14.83 MB | 8.15 MB | **+23%** |
+| `carcrash.wasm.unityweb` | 6.66 MB | 6.62 MB | 6.63 MB | — |
+| `carcrash.framework.js.unityweb` | 0.07 MB | 0.07 MB | 0.07 MB | — |
+| `carcrash.loader.js` | 0.11 MB | 0.11 MB | 0.11 MB | — |
+| **Total** | **25.04 MB** | 21.63 MB | 14.96 MB | **+16%** |
 
-Reference game for comparison: ~14.7 MB. Largest single file is 8.15 MB against jsDelivr's
-**20 MB per-file cap**, so there is headroom — but watch `carcrash.data.unityweb`, which is where
-all content growth lands.
+**This release went over the cap and had to be cut back, twice.** The first build measured
+**35.32 MB in the data file — 15.32 MB over** — see the section below for what caused it. Two
+passes brought it down:
 
-**The data file more than doubled**, and that is the whole story of this build: a 100k-triangle
-course, a second car, two 1K textures and the TMP font atlas. Code barely moved. The two cheapest
-reductions when it next matters, in order:
+| Pass | Change | Data file |
+| --- | --- | --- |
+| — | first build, as imported | 35.32 MB |
+| 1 | 21 dam textures 2048 → 512, crunch on | 21.90 MB |
+| 2 | `glendam.fbx` mesh compression Medium, animation/blendshapes/cameras/lights off; crunch on the last 15 uncrunched textures across all vehicles, Everest and Quarry | **18.20 MB** |
 
-1. **A trimmed TMP font asset.** The stock `LiberationSans SDF` is 2.2 MB and force-included from
-   a `Resources/` folder; the game draws digits, a few words and some part names. Font Asset
-   Creator with a custom character set gives roughly 100 KB.
+**Headroom is 1.80 MB, and every texture in the project is now crunched**, so the cheap wins are
+spent. The next reduction is the **TMP font trim (~2.1 MB)**, still undone and now the only
+large lever left that costs nothing on screen. Do it before the next map.
+
+**Mesh compression is ON for The Dam and nothing else.** It quantises vertex positions, and that
+map's colliders were already troublesome, so if the road there ever feels bumpy or the wheels
+catch on nothing, that setting is the first suspect — `meshCompression: 2` in
+`glendam.fbx.meta`, set back to `0` to rule it out.
+
+### Build size — measured 2026-08-31, Update 1
+
+Brotli, **21.63 MB** total download. Commit `1380215`: Everest, the LCT 3000 truck, the smarter
+AI, feats, patch notes and the reset button.
+
+| File | Update 1 (08-31) | First build (08-30) | Smoke test (08-27) | Change this release |
+| --- | --- | --- | --- | --- |
+| `carcrash.data.unityweb` | **14.83 MB** | 8.15 MB | 3.71 MB | **+82%** |
+| `carcrash.wasm.unityweb` | 6.62 MB | 6.63 MB | 6.49 MB | — |
+| `carcrash.framework.js.unityweb` | 0.07 MB | 0.07 MB | 0.07 MB | — |
+| `carcrash.loader.js` | 0.11 MB | 0.11 MB | 0.11 MB | — |
+| **Total** | **21.63 MB** | 14.96 MB | 10.4 MB | **+45%** |
+
+**⚠ THE HEADROOM IS NEARLY GONE, AND THE FAILURE IS TOTAL.** `carcrash.data.unityweb` is
+**14.83 MB against jsDelivr's hard 20 MB per-file cap** — about **5.2 MB left**. Everest and the
+truck cost 6.7 MB between them, so **one more map of Everest's size breaks the cap**, and when a
+file exceeds it jsDelivr serves a 404: the game does not load at all. This is now the binding
+constraint on new content, ahead of frame rate.
+
+It has also crossed the **≤ 20 MB download** budget written into the performance budget below,
+which matters on school Wi-Fi rather than on the GPU. The budget line is left as-is deliberately,
+so the overrun stays visible rather than being defined away.
+
+All content growth lands in the data file. Cheapest reductions, in order, and **the first one
+should be done before the next map**:
+
+1. **A trimmed TMP font asset — ~2.1 MB, about twenty minutes.** The stock `LiberationSans SDF`
+   is 2.2 MB and force-included from a `Resources/` folder; the game draws digits, a few words
+   and some part names. Font Asset Creator with a custom character set gives roughly 100 KB.
+   This is 10% of the whole download for one afternoon's work and nothing on screen changes.
 2. **`--mountain-cell 24`** on the course generator. The mountainsides are the bulk of the
-   geometry and are seen only at distance.
+   geometry and are seen only at distance. Applies to both courses.
+3. **Drop `Source/` FBXs from the repo** if it ever matters — they do not ship (nothing
+   references them, so Unity excludes them from the build) but they do cost clone time.
+
+### A DOWNLOADED MAP BLEW THE CDN CAP — 2026-09-02
+
+**The Dam build came out at 35.32 MB in the data file against jsDelivr's 20 MB per-file cap.**
+It would not have loaded at all: the CDN 404s the file, the loader hangs, and nothing on screen
+says why. Caught by the size check after the build and before the push.
+
+**The cause was 21 textures at 2048 with crunch off — 42 MB of source PNG.** Nothing generated
+by this project has ever done that; Quarry and Everest are procedural and their two Poly Haven
+textures are 1K crunched. **A downloaded map arrives with the ORIGINAL artist's import settings,
+and those are sized for a desktop game, not for a 20 MB CDN budget.**
+
+Fixed by editing the `.meta` files directly — `maxTextureSize: 2048` to `512` and
+`crunchedCompression: 0` to `1` across all 21, in the default block and every platform override.
+Unity reimports on focus. Editing metas in bulk beats clicking 21 inspectors and is reviewable
+in a diff.
+
+**Standing rule, now with a reason attached: every imported asset gets its import settings
+checked BEFORE it is wired into a scene, not after the build.** The check is one line:
+
+```bash
+grep -rl 'maxTextureSize: 2048' Assets --include='*.meta'
+```
+
+Anything that comes back is a 2K texture, which this project's budget has never allowed. A 2048
+DXT texture with mipmaps is ~2.7 MB of build each, so twenty of them is the entire download
+budget spent on one map's surfaces.
+
+**The size check is the only thing standing between a bad import and a dead build.** It is the
+second time a silent CDN failure has been caught by a script rather than by looking — the first
+was the `BUILD_BASE` hash. Both fail with a game that looks perfectly fine locally.
+
+Known and deliberately NOT changed at the same time: `glendam.fbx` is a 47 MB source FBX with
+`meshCompression: 0`. Mesh compression quantises vertex positions, and this map's colliders were
+already troublesome, so it is left alone — a lever to reach for only if textures alone do not get
+under the cap.
 
 ### Web player settings (verified on disk)
 
@@ -195,25 +274,29 @@ off — threads need COOP/COEP headers Google Sites will never send), `webGLData
 Untested lever if the Chromebook is slow: capping `devicePixelRatio` to 1. HiDPI Chromebooks
 render far more pixels than the GPU can afford. Measure before reaching for it.
 
-## NEXT SESSION — pick up here (updated 2026-08-30, shipped)
+## NEXT SESSION — pick up here (updated 2026-08-31, Update 1 shipped)
 
-The game is BUILT AND LIVE on Google Sites (commit `f87f071`, 14.96 MB). The E30 and the P72
-drive, scoring counts, Quarry01 is textured, three AI cars race the hill, and the garage sells
-cars for gears. What follows is only what is still open.
+**Update 1 is BUILT, PUSHED AND LIVE on Google Sites** — commit `1380215`, embed pinned by
+`2852448`, 21.63 MB. Confirmed working on the live build: two maps, three cars, the truck in
+traffic, feats, the patch-notes panel and RESET PROGRESS.
+
+Two maps (Quarry01, Everest), three cars (E30, P72, LCT 3000 truck), traffic mixed at random
+from the whole roster, scoring with combo and feats, the garage, dev mode and fullscreen. What
+follows is only what is still open.
 
 ### State on disk
 
-**All committed as of 2026-08-30.** `0dba3b5` is the whole E30 import, the Blender pipeline,
-the three damage scripts and the scene wiring; `427dcf4` scoring; `85a946c` the scoring
-readouts; `4b271a1` `PlayerCar`. The E30 FBX meta carries `isReadable: 1`, which deformation
-requires. `Quarry.unity` holds the E30 wiring plus a small **pre-existing, unrelated**
-loading-bar transform change from an earlier session.
+**Everything is committed and pushed as of 2026-08-31, working tree clean at `2852448`.**
+`1380215` is Update 1 in full — Everest, the truck, the AI work, feats, the menu changes and the
+release tooling. Both split FBX metas carry `isReadable: 1`, which deformation requires.
 
-`Assets/Models/` is an empty leftover folder with an orphan `.meta`. Delete it in the Editor.
+### The one thing that will bite next
 
-**The scene still needs saving with `PlayerCar` on `Car`**, and `RunScore`'s `gearsPerDamage` /
-`gearsPerPartHealth` were left at `1` / `5` during debugging — check they are back to `0.02` /
-`0.25` before trusting any scoring number.
+**The download is 21.63 MB and `carcrash.data.unityweb` is 14.83 MB against jsDelivr's hard
+20 MB per-file cap.** Roughly 5.2 MB of headroom, and Everest alone cost about 5. **Trim the TMP
+font (~2.1 MB, ~20 minutes) before adding another map** — see the build-size section. If the cap
+is exceeded the CDN 404s the file and the game does not load at all, which is a much worse
+failure than anything on the open list below.
 
 #### Compile-checking without opening Unity
 
@@ -245,9 +328,23 @@ no bulges, no black patches. Roof crush and sustained grinding are implemented b
 after the last play test.
 
 **Scoring runs (2026-08-30).** The HUD draws, `PlayerCar` registers itself with `RunScore`, damage
-events arrive and the gear counter climbs. What is confirmed is exactly that chain and no more --
-**the combo multiplier, the floating popups, the part bonus and banking to `PlayerWallet` have
-all still never been observed.** See the unrun list below.
+events arrive and the gear counter climbs. The combo multiplier and the floating popups were
+confirmed later the same day on Quarry01.
+
+**Banking to `PlayerWallet` is confirmed (2026-08-31).** The garage shows a six-figure balance
+accumulated across runs, which can only have come through `RunScore.Bank()` on scene unload, so
+the whole earn-bank-spend loop is closed and observed end to end.
+
+**The LCT 3000 truck drives (2026-08-31).** That also confirms the entire `--nose` reorientation
+path: the truck reached Unity upright, facing forward, with `wheelVisualEuler (0, 0, 0)` at Scale
+Factor 1.0, exactly as the P72-layout argument predicted. `--nose` is now the recommended flag
+for every future model, and the wheel-axis table in the Blender section is proven, not reasoned.
+
+**The Update 1 menu works (2026-08-31), on the live Web build.** The patch-notes panel renders on
+the main screen, the garage no longer clips at three cars, and RESET PROGRESS arms on the first
+press and erases on the second. That also confirms `UiKit.Band`'s adaptive layout, the
+`fontSize` parameter on `UiKit.Button`, and `Show()` repainting Main and Cars on arrival --
+which is what makes the wallet display correct immediately after a reset rather than stale.
 
 **The front end works (2026-08-30).** Main menu, map select, car select, GO, TAB pause, resume and
 return to menu all confirmed. That also confirms the code-built canvases, the
@@ -268,9 +365,20 @@ Console warning naming the missing component was on screen the whole time.
 
 ### Never run in Unity — still inspection-clean only
 
+**These are the oldest unverified things in the project and they are now cheap to clear.** The
+truck has **12 detachable parts at deliberately low health**, so a single run in it exercises
+panel detachment, the part bonus popup, `Part.displayName` captions, detached wheels as debris
+and the wheel/mirror feats all at once. Nothing below needs a special test build — just drive the
+truck into things and watch. Do this before adding more damage code.
+
 - **The part bonus popup.** Needs a panel to actually come off, which is itself unrun (below).
   `Part.displayName` was added so the caption reads "Wheel Front Right" rather than `WHEEL-FR`;
   whether those captions appear at all is untested.
+- **Feats.** Written 2026-08-31, wired, and **never observed firing.** "Boat" needs all four
+  wheels gone in one run and "Mirror Mirror" both mirrors, which again is easiest in the truck.
+  If they never appear, check the `Group` string on the mirror parts first — a group that
+  matches nothing is guarded against firing vacuously, so the symptom is silence, not a wrong
+  popup.
 
 - **Panel detachment against real geometry.** Rammed once, 2026-08-29: the whole shell came off
   at once and was fired sideways. Both causes found and fixed (`maxDamagePerImpact`,
@@ -298,36 +406,32 @@ Console warning naming the missing component was on screen the whole time.
 
 ### Open, in rough priority order
 
-0. **DONE — the front end works.** Confirmed 2026-08-30: PLAY →
-   map → car → GO → the run → TAB → RESUME → TAB → RETURN TO MENU all work. Banked gears
-   appear on the main screen. If a future change breaks it: suspect the EventSystem input module
-   first, then the Scene List.
+**Closed since this list was written**, so they are not re-opened by mistake: the front end
+(2026-08-30), the E30/P72/truck CC-BY attribution on the car-select screen, the download
+re-measure, the Chromebook frame rate, and banking to `PlayerWallet`. All are recorded under
+*Confirmed working* or in the measured sections above.
 
-   Requires: `MainMenu.unity` with a `MenuUI` object, `PauseMenu` on **GameManager** in
-   `Quarry`, and **both scenes in File > Build Profiles > Scene List**.
-
-0b. **Check the two scoring conversion values.** `Quarry` carried `gearsPerDamage: 1` and
-   `gearsPerPartHealth: 5` from debugging — **50x and 20x the intended `0.02` and `0.25`**.
-   Confirm they were put back before judging any scoring number, and re-tune them now that
-   there is traffic to hit.
-
-1. **Play-test the suspension numbers.** `bumpStopStrength` 60000 and `antiRollStrength` 4000
-   are reasoned starting points, never driven. Inside wheels lifting mid-corner → drop
-   `antiRollStrength` to ~2000. Still sitting on its belly at speed → cut `downforce` from
-   0.9 to ~0.35 (see the load budget under *Architecture calls*), not `springStrength`.
-2. **Wire the new components and the trunk in the Editor.** Add `CarGlass` and
-   `CarInteriorProps` to `Car`, and add a 12th part -- name `trunk`, Visual `PartTrunk` (under
-   `e30-split`), Anchor None, Health 120, Wheel Index -1. `PartTrunk` exists in the mesh and has
-   never been wired, so the boot lid still cannot come off.
-3. **Play-test glass, interior props, roof crush and sustained grinding.** All four are written
-   and none has been run.
-4. **Damage thresholds are only half-calibrated.** `lastImpulse` **measured ~16,500** on a wall
-   hit, so `minimumImpulse` 900 gates out almost nothing and `maxDamagePerImpact` 60 is what
-   actually makes damage progressive. Read `lastImpulse` at other speeds before changing either.
-5. **In-game attribution for the E30 is not built.** CC-BY makes it mandatory. Garage screen.
-6. **Rebuild and re-measure download size** against the baseline table above.
-7. **Get a real frame-rate number off a school Chromebook.** Still the largest unknown in the
-   whole project — every performance claim in this file is reasoning, not measurement.
+1. **Trim the TMP font.** ~2.1 MB. The reason it is first is the per-file cap, not the size
+   budget — see the roadmap.
+2. **Check the two scoring conversion values.** `Quarry` once carried `gearsPerDamage: 1` and
+   `gearsPerPartHealth: 5` from debugging — **50x and 20x the intended `0.02` and `0.25`**. It
+   has never been explicitly confirmed that they were put back, and a six-figure wallet cannot
+   distinguish "correct rates over many runs" from "50x rates" because dev mode grants
+   1,000,000 outright. **Read the two fields on `RunScore` in the scene before trusting any
+   scoring number**, and re-tune now that there are three cars and traffic to hit.
+3. **`PartTrunk` on the E30 has still never been wired.** The mesh has it (146 tris); add a 12th
+   part — name `trunk`, Visual `PartTrunk` under `e30-split`, Anchor None, Health 120, Wheel
+   Index -1 — or the boot lid cannot come off. Note the truck already has 12 parts and does not
+   need this.
+4. **Glass, interior props, roof crush and sustained grinding on the E30 are still unverified.**
+   Written, wired, never deliberately tested. The truck does not use `CarInteriorProps` at all
+   (it has a real interior) and needs `glassMaterialName` set to its own material, so a result
+   on one car does not carry to the other.
+5. **Damage thresholds are only half-calibrated, and now differ per car.** `lastImpulse` measured
+   ~16,500 on an E30 wall hit; the 3,000 kg truck should report ~2.5x that. Read `lastImpulse`
+   on each car before changing `minimumImpulse` or `maxDamagePerImpact` — and see the heavy-
+   vehicle note under the truck, because the two scale in opposite directions with mass.
+6. **Decide whether hitting traffic pays** (`TrafficSpawner.scoreTrafficDamage`, still off).
 
 ### Known latent, not yet worth fixing
 
@@ -356,25 +460,34 @@ Build order — expensive unknowns first, content last:
    · **dev mode** · **shipped to Google Sites, 14.96 MB, commit `f87f071`**
    · **60 FPS measured on a real school Chromebook** · **Everest, the second map**
    · **feats** · **the LCT 3000 box truck — split, wired and driving (third car, 12 parts)**
+   · **the truck in the traffic mix** · **patch notes and RESET PROGRESS on the front end**
+   · **release tooling that catches a stale build and an unpinned hash**
+   · **UPDATE 1 shipped to Google Sites, 21.63 MB, commit `1380215`**
 
-2. **Now — THE CHROMEBOOK FRAME RATE.** It is the last unmeasured thing in the project and it is
-   overdue: the scene has gained a 100k-triangle course, four cars with suspension, two 1K
-   textures and a font atlas, and **every performance claim about all of it is reasoning rather
-   than measurement.** Read it off the live build — Options, the dev code, readout top-left.
-   Nothing else on this list is worth doing until that number exists, because it is the only
-   thing that can invalidate work already done.
+2. **Now — TRIM THE TMP FONT.** ~2.2 MB down to ~100 KB, roughly twenty minutes, and **nothing
+   on screen changes.** It is first not because it is interesting but because
+   `carcrash.data.unityweb` is **14.83 MB against jsDelivr's hard 20 MB per-file cap** and the
+   next map breaks it. Exceeding the cap 404s the file and the game does not load at all — a
+   worse failure than anything else on this list, and one that would land the moment content
+   ships rather than when it is written. Window → TextMeshPro → Font Asset Creator, custom
+   character set, delete the stock asset.
+
+   The frame-rate question that used to sit here is **answered**: 60 FPS on a real school
+   Chromebook, 2026-08-31. See the measured section above. Re-measure after anything that
+   changes scene scale, but it is no longer a blocker.
 
 3. **Next** — in rough order:
-   - **Re-tune damage and scoring now traffic exists**, and decide whether hitting traffic should
-     pay (`TrafficSpawner.scoreTrafficDamage`, currently off). Also sanity-check the 50,000 price
-     against a real run: at ~200 gears a run that is 250 runs.
-   - **A second map.** The generator makes this cheap — a different `--seed`, `--theme`,
-     length and width. Highest content-per-effort item in the project, but pick numbers that
-     change how it DRIVES, not just how it looks — corridor width and curviness do that,
-     a new seed alone does not.
-   - **Trim the TMP font asset** if the download needs to come down. 2.2 MB to ~100 KB.
+   - **Re-tune damage and scoring now there are three cars and two maps**, and decide whether
+     hitting traffic should pay (`TrafficSpawner.scoreTrafficDamage`, still off). Sanity-check
+     the P72's 50,000 and the truck's 20,000 against a real run.
+   - **A third map**, but only after the font trim — see above. Pick numbers that change how it
+     DRIVES, not just how it looks: corridor width and curviness do that, a new seed alone does
+     not. Everest proved the point by initially reading as Quarry with different textures.
+   - **Falling rocks on Quarry** — Ethan's, recorded under *Ideas for later* with the three
+     things to settle first.
    - **Panel seams on the P72.** Region boxes cut straight lines through a curved body; fixing
-     it properly needs carving that snaps to edge loops.
+     it properly needs carving that snaps to edge loops. The truck showed the better answer for
+     any future car — `--keep` an artist's own cuts and never carve at all.
 4. **Later** — split-screen 2P · juice · audio · more content · ship pass
 
 ### Architecture calls already made
@@ -429,6 +542,45 @@ Build order — expensive unknowns first, content last:
   Drive and brake forces deliberately **stay at the anchor**; the squat and dive they produce
   is good arcade feel. `OnDrawGizmosSelected` was drawing the raw offset, putting the yellow
   centre-of-mass marker 0.6 m *under the road*; it now draws `centerOfMass + offset`.
+- **`maxGripForce` set to 26 instead of 26,000 makes the car drive on ICE, and nothing says so.**
+  Happened 2026-09-02 across three prefabs, from a table that wrote the values with comma
+  separators. 26 N on a 1,200 kg car is **0.009 g** of lateral grip — the tyres cannot act at
+  all, so the car points into a corner and slides straight on. It looked like a physics bug, a
+  map bug and a turn-assist bug in turn; it was a data entry error.
+
+  The tell was that TRAFFIC cornered normally while the player car slid: traffic prefabs still
+  had their old values. **When one car misbehaves and another does not, compare their prefabs
+  before reading any code.**
+
+  `CarController.CheckGrip` now logs an error at Awake naming the field and the value in G, so
+  the silent version of this cannot recur.
+
+- **Turn-in is ASSISTED toward a real yaw rate, not left to tyre force alone.** Reported
+  2026-09-02: turning "sucks". Yaw came only from lateral tyre force, which is honest and feels
+  vague — the car must build a slip angle before the fronts bite, and `maxGripForce` caps how
+  fast that force can arrive, so turn-in lags the wheel and the car ploughs on first.
+
+  `ApplyTurnAssist` drives the yaw rate toward what the car's own geometry implies, using the
+  steady-state bicycle model **with an understeer gradient**:
+
+      yaw = v x tan(steer) / (wheelbase + understeer x v^2)
+
+  **The understeer term is not optional.** Raw Ackermann assumes the tyres never slip, and asks
+  the E30 for a NINE METRE turn radius at 108 km/h — the assist would sit permanently saturated
+  delivering it and the car would corner like a slot car. With `understeer` 0.006 the targets are
+  5 m at 36 km/h, 28 m at 108 and 64 m at 162, which is a car.
+
+  What is arcade about it is only that the yaw is helped along directly instead of waiting for
+  the tyres. The steering angle still means what it says.
+
+  Three guards, all load-bearing: GROUNDED only, or it fights air control and lets you steer on
+  nothing; above `turnAssistMinSpeed`, or it spins a parked car on the spot; and the correction
+  is CLAMPED by `maxTurnAssist`, which is what keeps a slide a slide rather than quietly
+  straightening the car out.
+
+  `wheelbase` is MEASURED from the wheel anchors at Awake rather than exposed as a field — it is
+  a fact already in the scene, and a second copy is a thing to get wrong on one car only.
+
 - **Bottoming out is fixed with a bump stop and an anti-roll bar, not with a stiffer spring.**
   A linear spring gives its travel away evenly — the last centimetre costs no more than the
   first — so downforce plus cornering load walks a corner to full compression and the body
@@ -478,6 +630,44 @@ Build order — expensive unknowns first, content last:
   `wheelRadius`. Raising `maxGroundAngle` brings ledge-climbing back; much below ~45° and
   legitimate ramps stop counting as ground.
 
+- **Camera framing is PER-VEHICLE, and the offsets are ADDITIVE.** `ChaseCamera`'s numbers were
+  tuned on the E30 (4.16 m long, 1.36 m to the roof) and suit the P72, which is smaller again.
+  The LCT 3000 broke them: **2.1x taller and 1.4x longer**, so the rig sat level with the box body
+  and the truck filled the screen with the road hidden behind it.
+
+  `Camera/CarCamera.cs` goes on a car prefab and supplies `extraDistance` / `extraHeight` /
+  `extraLookHeight`. Three decisions worth keeping:
+
+  - **Additive, never absolute.** A car that already frames correctly needs no component at all —
+    absent means zero — so the E30 and P72 keep exactly the behaviour they have and cannot be
+    disturbed by a change made for the truck. Each vehicle states only how it DIFFERS, so
+    retuning the base rig still moves every car together instead of being silently overridden
+    per prefab.
+  - **It lives on the CAR**, not on the camera and not in `CarRoster`. Framing is a property of
+    the vehicle's shape; the camera is one object that follows whatever spawns, and the roster is
+    about price and ownership. `ChaseCamera` reads it through the same lazy `PlayerCar.Current`
+    path it already uses, so a garage swap swaps the framing with it and nothing is wired.
+  - **`RigLookHeight` is used by BOTH the driving aim point and the look-around blend.** Adjusting
+    only one leaves a truck correctly positioned but still aimed at the middle of its box body,
+    which reads as the camera being wrong in a way the position numbers cannot explain.
+
+  **Derive the numbers, do not eyeball them.** Take the body bounds from `car_bounds.py` and keep
+  the E30's proportions — roof 1.355, rear overhang 2.578:
+
+  ```
+  extraHeight     = roofHeight - 1.355                              (same clearance over the roof)
+  extraDistance   = (rearOverhang - 2.578) + (roofHeight - 1.355) x 0.5
+  extraLookHeight = roofHeight - 1.355
+  ```
+
+  The truck measures roof 2.84, rear overhang 3.01, giving **+1.5 / +1.2 / +1.5**.
+
+  **Height is the lever that matters; distance barely is.** Framing arithmetic at FOV 60 says
+  pulling back changes the screen fraction of a *long* vehicle very little — the truck is 6 m
+  long, so most of the extra distance is spent on the length it already occupies. Raising the
+  camera over the roof is what actually puts the road back on screen, which is also the first
+  thing you notice is wrong. Reach for `extraHeight` first on any future big vehicle.
+
 - **The camera tracks the car's VELOCITY, not its facing.** In a game built around spins
   and broadside hits, a facing-locked camera whips around and makes people ill. Below
   `velocityYawThreshold` it falls back to facing so parking still reads correctly, and
@@ -496,13 +686,26 @@ Build order — expensive unknowns first, content last:
 ### Provisional performance budget
 
 60 FPS target / 30 floor · ≤ 20 MB download · ≤ 40 live rigidbodies · no realtime shadows ·
-no post FX until measured. Revise once there are real Chromebook numbers.
+no post FX until measured.
+
+**Two of these are now knowingly exceeded and both need re-measuring on the device:**
+
+| Line | Budget | Actual | Status |
+| --- | --- | --- | --- |
+| Download | ≤ 20 MB | **21.63 MB** | over; per-file cap (20 MB) is the hard one at 14.83 MB |
+| Live rigidbodies | ≤ 40 | **up to 44** | 16 boulders + 4 cars + 24 debris, unmeasured |
+| Frame rate | 60 / 30 floor | 60, ~1 ms jitter | measured 2026-09-01, but **before the boulders** |
+
+The frame-rate figure is the one that licenses the other two, and it predates the change most
+likely to break it. Read `FPS`, `worst` and `N boulders live` off the dev readout on a real
+Chromebook before treating any of this as settled.
 
 ## Scripts
 
 | Script | Job |
 | --- | --- |
 | `Camera/ChaseCamera.cs` | Automatic chase cam. No player input, ever. |
+| `Camera/CarCamera.cs` | Per-vehicle camera offsets, on the car prefab. Additive; absent = unchanged. |
 | `Vehicle/CarInput.cs` | Keys → throttle / steer / handbrake. Has a `Scheme` for split-screen. |
 | `Vehicle/PlayerCar.cs` | Marks the player's car and announces it. `PlayerCar.Current` is how anything finds it. |
 | `Vehicle/CarController.cs` | SphereCast suspension with bump stops and anti-roll bars, drive, grip, steering, air control. |
@@ -512,14 +715,19 @@ no post FX until measured. Revise once there are real Chromebook numbers.
 | `Damage/CarInteriorProps.cs` | Generates the dark engine bay / cabin a missing panel reveals. |
 | `Damage/DebrisPool.cs` | Pools, caps, expires and sleeps detached parts. `Track()` adopts real panels. |
 | `Game/RunRestart.cs` | R reloads the scene behind a loading bar. |
-| `Game/RunScore.cs` | Damage and lost parts → gears. Combo multiplier. Banks the run on scene unload. |
-| `Game/ScoreHud.cs` | Gear counter, combo bar and floating popups. Builds its own canvases in code. |
-| `Game/PlayerWallet.cs` | Persistent gear balance and best run, in PlayerPrefs. |
+| `Game/RunScore.cs` | Damage, lost parts and airtime → gears. Combo multiplier. Feats. Banks the run on scene unload. |
+| `Track/FallingBoulders.cs` | Boulders down the valley sides. Generated meshes, own pool, spawned ahead of the player. |
+| `Track/DartboardScore.cs` | Scores where the car lands on Bullseye. Archery rings, 10 in the gold down to 1. |
+| `Game/ScoreHud.cs` | Gear counter, combo bar, airtime, MPH speedometer and floating popups. Builds its own canvases in code. |
+| `Game/PlayerWallet.cs` | Persistent gear balance, best run and owned cars, in PlayerPrefs. |
+| `Game/SaveCode.cs` | Progress as a copy-paste text code. Works when browser storage does not. |
+| `Game/SaveHealth.cs` | Counts launches to prove whether this browser actually persists anything. |
 | `AI/TrafficDriver.cs` | Traffic AI. Steers at the biggest ground drop ahead. See the known limitation. |
 | `AI/TrafficSpawner.cs` | Spawns the traffic grid, paints it, optionally registers it for scoring. |
 | `Vehicle/ICarDriver.cs` | Throttle / steer / handbrake. Implemented by `CarInput` and `TrafficDriver`. |
 | `Vehicle/CarPaint.cs` | Tints the body submesh via a MaterialPropertyBlock. |
 | `Menu/MenuUI.cs` | Main menu, patch notes, map select, garage, options, reset progress. Carries the three CC-BY credits. |
+| `Menu/CarPodium.cs` | Garage carousel: rotating car on a lit podium, animated backdrop, arrow sweeps. |
 | `Menu/UiKit.cs` | Canvas, button and label builders shared by the menu and the pause screen. |
 | `Game/PauseMenu.cs` | TAB pauses. Resume and return to menu. |
 | `Game/GameSelection.cs` | Chosen map and car, by string id, in PlayerPrefs. |
@@ -1155,6 +1363,52 @@ better and measure again afterwards.
 scale — more traffic, a bigger map, realtime shadows, post FX. 60 FPS on *this* content is not a
 blanket permission. And it is one device on one day; a different Chromebook model may be slower.
 
+### Hard numbers off the readout — 2026-09-01, Update 1, both maps
+
+The first time the actual device specs were read rather than assumed. **Both maps, 60 FPS.**
+
+| | Quarry | Everest |
+| --- | --- | --- |
+| FPS | **60** | **60** |
+| Worst frame in the sample window | **17.0 ms** | **18.0 ms** |
+| Resolution | 1041 × 670 | 1041 × 670 |
+| API | OpenGLES3 (WebGL2 via ANGLE) | same |
+| GPU | **Intel UHD Graphics (JSL)** — Jasper Lake, Mesa | same |
+| Heap | **154 MB** of the 512 MB cap | same |
+| State when sampled | 22 km/h, grounded | 143 km/h, airborne |
+
+**Read `worst` correctly or it looks like a warning when it is the opposite.** `PerfReadout`
+resets `worstFrame` every sample window, so 17-18 ms is the worst single frame **in each second**,
+against a 16.67 ms vsync budget. That is about a millisecond of jitter on a locked 60 — i.e.
+effectively no dropped frames. A device in trouble shows 30-50 ms spikes. This is as clean as a
+vsynced 60 gets.
+
+**Jasper Lake UHD is genuinely low-end** — a Celeron/Pentium-class Chromebook part — which makes
+the result stronger, not weaker. **The original framing in Working Rule 2 ("a browser tab that
+dies if the WASM heap spikes") was too pessimistic**, and Ethan was right to push back: the heap
+sits at 154 MB against a 512 MB ceiling, so there is roughly 3.5x memory headroom, and the frame
+budget is being met with room to spare on the worst frames rather than scraped.
+
+**The two caveats that are real, and are not pessimism:**
+
+1. **This is 1041 × 670 — 0.70 megapixels.** That is the Google Sites iframe, not fullscreen.
+   Fullscreen at 1920 × 1080 is **2.07 MP, about 3x the fragment load**, and *that* number has
+   never been measured. Anything GPU-bound (post FX, realtime shadows, a heavier shader) must be
+   judged at fullscreen, not in the iframe. There is a fullscreen button; use it and re-read.
+2. **`1 cores` is not the device's core count.** `SystemInfo.processorCount` returns 1 on Web
+   because `webGLThreadsSupport` is off. The device has more; we cannot use them. Physics stays
+   single-threaded, so **CPU cost is still the thing to watch, and rigidbody count is still the
+   first thing to blow it** — that part of the budget is unchanged.
+
+**Revised standing budget:** keep 60 FPS target / 30 floor and the no-realtime-shadows rule, but
+stop treating memory as scarce. The binding constraint on new content is now the **20 MB
+per-file download cap**, not the frame rate — see the build-size section. When something has to
+be argued down, argue it down on download size first and rigidbody count second.
+
+**A comparison worth keeping in proportion:** Papa's games and similar run fine on these devices,
+but they are 2D sprite games with no physics solver. They are evidence the *device* is capable,
+not that a 3D rigidbody game is cheap on it. The right conclusion is the measured one above.
+
 ## Ideas for later — not started
 
 Ethan's, recorded so they are not lost. Nothing here is designed or scheduled.
@@ -1168,26 +1422,8 @@ Ethan's, recorded so they are not lost. Nothing here is designed or scheduled.
 - **Destruction derby mode.** An arena rather than a descent, last car running wins. Note this
   breaks descent-seeking completely — there is no downhill in an arena — so it is the mode that
   forces the AI's direction source to be replaced properly.
-- **Falling rocks on Quarry.** Ethan's, 2026-08-31. A hazard that comes down the quarry walls
-  while you drive. Not started, and not scheduled.
-
-  Three things to settle before writing any of it, recorded now because they are what will
-  decide whether it is cheap or ruinous:
-
-  1. **Rigidbody count is the whole cost.** The budget is ~40 live rigidbodies and detached
-     debris already competes for it. A rock that spawns, falls, lands and sleeps is affordable;
-     rocks that accumulate are not. It needs the `DebrisPool` treatment — pooled, capped,
-     expired, slept — and that pool already exists and should be reused rather than copied.
-  2. **A rock the player never sees coming is not a hazard, it is a punishment.** It has to
-     start visibly up the wall and fall with enough warning to react, which on a 26 m corridor
-     at 20 m/s is not much. Telegraph it (dust, a sound, a shadow) before the rock is lethal.
-  3. **The AI cannot see it.** `TrafficDriver`'s probes read the *ground*, and its hazard sweep
-     runs at 14 Hz against static geometry. A falling rock is neither, so traffic will drive
-     straight into them — which may be excellent (carnage the player watches) or may just look
-     stupid. Decide which before tuning anything.
-
-  Cheapest version that would work: reuse the existing `CourseRock` meshes, spawn from a few
-  hand-placed points on the wall tops, one pooled rigidbody each, despawn on sleep or timeout.
+- ~~**Falling rocks on Quarry.**~~ **BUILT 2026-09-01** — `Track/FallingBoulders.cs`. See the
+  section under *Scoring* for how it works and what the three pre-flight concerns turned into.
 
 ## Game design
 
@@ -1205,6 +1441,19 @@ that is a drivable downhill destruction course. The good-looking terrain is phot
 (a Sketchfab canyon at **229k tris**, against an 11.6k-tri car), the CC0 modular kits (Kenney
 Racing Kit, Fertile Soil) are toy low-poly, and the open-source racing games ship **GPL**
 (Stunt Rally) or **CC-BY-SA** (SuperTuxKart) track data, neither of which belongs in this repo.
+
+**RIPPED COMMERCIAL GAME ASSETS ARE RULED OUT, and this is the strictest of the asset rules.**
+Offered 2026-09-02: `nfs-iii-hot-pursuit-country-woods/track5.fbx`, a Need for Speed III track.
+The geometry and textures are EA's copyrighted work, and **a Sketchfab uploader cannot license
+someone else's content under CC-BY** — the licence shown on such a page does not attach to data
+the uploader does not own.
+
+This is materially different from the Lamborghini, where the MODEL is an original CC-BY work by
+its author that happens to depict a trademarked car. Here the asset itself is the rights holder's.
+
+The consequence is specific rather than abstract: **the repo has to stay public for jsDelivr**, so
+infringing content sits in public, and a takedown against the repo takes the GAME OFFLINE because
+jsDelivr serves the build from it. Renaming the file does not change any of that.
 
 **Unity Asset Store assets are also ruled out permanently** — the EULA forbids redistributing
 them, and this repo must stay public for jsDelivr. That eliminates most search results for
@@ -1372,6 +1621,41 @@ the second one down and names both objects in the error.
 
 #### Dev mode
 
+**Tuner values are SAVED, per car, and cleared by RESET PROGRESS** (2026-09-02). `CarTuning`
+owns the table, because two things need it: the tuner that edits the values and
+`PlayerCarSpawner`, which puts them back on a freshly spawned car. Two copies of that list would
+drift and the failure would be silent — tune a spring rate, restart, quietly get the prefab's.
+
+Saved **per car id**, because the truck's spring rate is 2.5x the E30's by design and one shared
+set of numbers would be wrong for every car but the last one tuned. PlayerPrefs cannot be
+enumerated, so an INDEX of tuned ids is kept alongside — the same approach PlayerWallet uses for
+owned cars, for the same reason. A field with nothing saved is skipped individually, so an
+untuned car keeps its prefab values field by field rather than all or nothing.
+
+Applied in the SPAWNER, not `CarController.Awake`: the car should carry no notion of saved state,
+and the spawner is the one thing that knows which roster entry it is putting down.
+
+The car tuner takes TYPED VALUES, not just +/- nudges (2026-09-02). Nudging a spring rate from
+9,000 to the truck's 22,500 at 500 a click is 27 clicks, and the numbers this project actually
+needs — a 2.5x spring scaling, an exact downforce — are worked out on paper and then entered. The
++/- buttons stay for feeling a value out by ear, which is the other half of what the screen is for.
+
+Three things that had to be right:
+
+- **Committed on `onEndEdit`, never `onValueChanged`.** Per-keystroke would apply 9, then 90,
+  then 900 while "9000" is still being typed — and at `timeScale 0` a spring rate of 9 is
+  invisible until you resume into a car sitting on its bump stops.
+- **`RefreshTuner` skips a focused field and writes with `SetTextWithoutNotify`.** Writing `.text`
+  on a focused field fires `onEndEdit`, which calls Commit, which calls RefreshTuner — and
+  refreshing an unfocused one mid-entry snaps the value back while it is being typed.
+- **`UiKit.Typing()` now gates every global hotkey.** `R` restarts the run and `TAB` resumes, and
+  the keypress reaches `Keyboard.current` whether or not a numeric field accepts the character —
+  so typing a value and catching R would have thrown away the run being tuned. It asks the
+  EventSystem what is selected, so it covers every text box in the game including future ones.
+
+Parsed with `InvariantCulture`: a machine set to a comma decimal would read "0,85" as 85, turning
+a grip value into a hundred-fold error.
+
 Unlocked with a code on the menu's Options screen. Grants **1,000,000 gears rather than infinite**,
 deliberately: the garage, the wallet and the purchase path all still run their real code, whereas
 an "everything is free" flag would mean the buying path is never exercised until a player without
@@ -1437,9 +1721,22 @@ Other decisions:
 - **These are NOT the "kinematic until struck" traffic** in *Architecture calls*. That scheme is
   sized for ~20 background cars; these three race over the same kickers as the player and need
   real physics. Both schemes should coexist once the roster grows.
-- **Traffic damage does not score by default.** The design says the score is damage to YOUR car,
-  and with it on a traffic car wrecking itself on a wall pays the player for doing nothing.
-  `TrafficSpawner.scoreTrafficDamage` turns it on when that is decided.
+- **Damaging OTHER cars now pays, and traffic wrecking itself still pays nothing.** That
+  distinction is the whole reason `scoreTrafficDamage` sat switched off: the design says the
+  score is damage to YOUR car, and paying for a traffic car hitting a wall rewards the player for
+  doing nothing.
+
+  `CarDamage.Damaged` now carries the SOURCE and a `byPlayer` flag, which is what finally makes it
+  answerable — a listener could previously tell neither whose car was hurt nor who did it.
+  `RunScore.OnDamaged` pays for damage to your own car always, and for damage to anyone else's
+  only when you caused it. `gearsPerPvpDamage` (0.06) is triple the rate for your own, because
+  wrecking traffic is a deliberate act where taking damage yourself is mostly just what happens.
+  The popup reads WRECKER and is its own colour, so the two are told apart on screen.
+
+- **`carVsCarDamage` (3x) amplifies car-on-car impacts only.** Environment damage is untouched.
+  Two vehicles meeting is the moment this game is about, and at the shared rate it read as no
+  more eventful than brushing a rock. It applies to BOTH cars, since each runs its own collision
+  callback for the same impact — so a big hit is mutually destructive rather than one-sided.
 
 #### Making them fast — lookahead is TIME, not distance
 
@@ -1559,6 +1856,18 @@ game than another car that vanishes down the hill. `speedBoost` multiplies the i
 `topSpeed`, so the truck stays slower than the cars whatever it is set to, and pushing it just
 makes the truck worse at the corners it is already bad at.
 
+#### Obstacle avoidance is a per-MAP setting — 2026-09-02
+
+`TrafficSpawner.obstacleAvoidance` scales `TrafficDriver.hazardWeight` on every car it spawns.
+Set on the SPAWNER rather than the prefab because the same traffic prefabs are used on every
+course, and the right answer differs per map:
+
+- **Quarry: 1.** Real boulders on an otherwise clear floor — exactly the case the swept-sphere
+  hazard test was built for, and it took three attempts to get right.
+- **Everest: 0.** The whole face is jagged rock, so the sweep sees an obstacle everywhere and the
+  cars pick their way down a mountain that is meant to be bombed straight off. The hazard test is
+  not wrong; the question it answers is meaningless when the entire surface is the hazard.
+
 #### `CarPaint` — tint per SUBMESH, never per renderer
 
 `renderer.SetPropertyBlock(block)` applies to **every submesh that renderer draws**, and the E30's
@@ -1635,6 +1944,50 @@ Decisions that are load-bearing:
   `PerfReadout.car`, both of which are still hard scene references and will break the same way
   the moment a car is spawned rather than placed.
 
+#### Saving — it already worked, the problem was that failure is invisible (2026-09-01) — CONFIRMED IN PLAY
+
+**The game has always persisted.** `PlayerWallet` uses PlayerPrefs, which on a Web build lands in
+**IndexedDB**, and `PlayerPrefs.Save()` is called on every change. Close the tab, reopen it, the
+gears are there. There was never a missing save system.
+
+**The actual risk is that it can fail in total silence.** The game runs in a sandboxed
+third-party iframe two levels down inside Google Sites. If Chrome's storage partitioning, an
+incognito window or a school policy denies storage to that frame, every PlayerPrefs write still
+succeeds *in memory*, `Save()` throws nothing, and the entire balance vanishes when the tab
+closes. The player is told nothing and blames the game.
+
+**A same-session self-test CANNOT detect this, and that is the part worth remembering.** Writing
+a value and reading it straight back always succeeds, because PlayerPrefs answers from its
+in-memory copy whether or not the flush reached IndexedDB. Any check shaped like "set it, get it,
+compare" proves only that memory works. `SaveHealth` therefore counts **launches**: a counter
+that comes back from a previous session is the only thing that can prove persistence, so the
+answer is honestly "unknown" on a first visit and evidence-backed from the second on.
+
+**`SaveCode` is the fix, not the detector.** Progress encodes to a short text string the player
+copies and can paste back. It is immune to storage being blocked because it never touches
+storage, and it is the only way to carry a balance from the school Chromebook to another machine.
+
+**Google account sign-in was considered and does not fit**, for three independent reasons, any
+one of which is fatal: OAuth needs a redirect flow a sandboxed cross-origin iframe cannot do
+cleanly; it needs a server to hold saves, and avoiding a server is the whole reason this game
+gets through school IT at all; and managed school accounts routinely refuse third-party OAuth.
+A text code needs none of it and there is nothing for a filter to block.
+
+**The save code is not encrypted, deliberately.** Anyone can already grant themselves gears from
+devtools — `PlayerWallet` says as much. The checksum catches a TRUNCATED or mistyped code, not a
+dishonest one, and it exists because silently loading garbage would overwrite real progress. A
+bad paste must change nothing, which is why `TryImport` validates fully before touching the
+wallet.
+
+**THE BUG THIS ALMOST SHIPPED WITH, caught by a round-trip test and invisible to inspection:**
+the owned-car list is itself pipe-delimited (`p72|lct3000`) and `|` was also the code's field
+delimiter, so `Split('|').Length != 5` **rejected the save code of every player owning two or
+more cars** — precisely the saves worth keeping. It reads as correct. The fix is to take the
+fixed fields off the front, the checksum off the back, and treat everything between as the owned
+list. **Any format that embeds one delimited list inside another needs a round-trip test with a
+multi-item list, not a single-item one.** The standalone test covers empty, single, multi-item
+and `int.MaxValue`, plus truncation, junk and all 43 single-character corruptions.
+
 #### Patch notes and reset progress — 2026-08-31
 
 **Patch notes are drawn on the main screen, not behind a button.** Nobody clicks a "what's new"
@@ -1666,6 +2019,205 @@ dev-mode player zero gears and no route back short of re-entering the code anywa
 because returning from a run reloads the whole menu scene — but a reset changes the wallet,
 ownership and dev mode while every page already exists. `Show()` refreshes Main and Cars.
 
+#### The garage carousel — built 2026-09-01, CONFIRMED IN PLAY
+
+Replaced the list of car buttons with the reference game's layout: **one car at a time on a
+rotating podium, cycled with `<` `>`**, over an animated backdrop. `Menu/CarPodium.cs` +
+`Art/Menu/GarageBackdrop.shader`.
+
+- **The car on the podium is the REAL roster prefab, neutralised.** Using anything else — a
+  separate display model, a screenshot — reintroduces at the display layer exactly the drift the
+  roster ScriptableObject exists to prevent: the garage showing one car and the grid spawning
+  another. But a roster prefab is a live vehicle, so it has to be stripped.
+
+- **⚠ IT MUST BE INSTANTIATED INTO AN INACTIVE PARENT, AND THIS IS NOT TIDINESS.** The first
+  version spawned it live and then destroyed its components, which ran
+  **`CarDeformation.OnDestroy` — and that destroys the mesh instances the component cloned in its
+  own Awake.** Every MeshFilter it had cloned was left pointing at a destroyed mesh, so the body
+  and all eight panels rendered nothing. **The wheels are the one thing excluded from the
+  deformation panel list, so the tyres were the only part of the car that appeared** — a car
+  reduced to four floating wheels, with no error anywhere.
+
+  The fix is a permanently inactive `PodiumLimbo` child: `Instantiate` into it, so no `Awake` or
+  `OnEnable` ever runs, strip, then reparent to the live mount. That avoids the whole class of
+  problem rather than unpicking one instance of it — no cloned meshes to lose, no
+  `PlayerCar.Current` claimed, no physics on a prop.
+
+  Stripping uses **`DestroyImmediate`, not `Destroy`**: `Destroy` is deferred to end of frame and
+  the car is reparented into an active hierarchy on the very next line, which would wake every
+  component merely queued for destruction. This is the case that API is actually for — an object
+  created this instant, before it is ever activated.
+
+  **The general lesson: a component that owns a runtime-created asset will free it in OnDestroy,
+  so destroying that component is not a neutral act.** Check what `OnDestroy` does before
+  stripping anything.
+- **Rendered in the world, not into a RenderTexture.** A RenderTexture is a second camera pass
+  every frame for something already on screen. The UI is Screen Space Overlay, so the layering is
+  free: backdrop quad, podium, car, buttons on top.
+- **THE OPAQUE PAGE BACKDROP HAD TO BE SWITCHED OFF.** `UiKit.Backdrop` paints a full-screen
+  image on the canvas, so with it on the podium renders perfectly and invisibly behind a black
+  rectangle. `Show()` disables it on the garage page only. Worth remembering as a shape: the
+  symptom of this class of bug is that everything logs as working and the screen shows nothing.
+- **`Mouse.current`, NEVER `Input.mousePosition`.** This project uses the Input System package,
+  so the legacy `Input` class is switched off and reading it throws. Same reason
+  `UiKit.EnsureEventSystem` has to create an `InputSystemUIInputModule`. This is the second time
+  the legacy input class has been the trap in this project.
+- **The podium builds its own lights.** A menu scene is a camera and a canvas — there is no light
+  in it — so a car dropped in renders black. Two directional lights, shadows off.
+- **The car is seated from its RENDERER bounds, not its transform.** A roster prefab's origin is
+  wherever the model was authored and is not reliably at the tyre contact patch, so seating it by
+  transform sinks some cars into the podium and floats others.
+- **The model is only respawned when the car actually changes.** `RefreshCars` runs on every visit
+  and after every purchase; rebuilding an 11,000-triangle prefab because a price label changed
+  would be a visible hitch for nothing.
+- **Arrows wrap.** A disabled arrow at the end of the roster reads as a bug, the same reason the
+  action button changes meaning rather than greying out.
+- **All of it runs on unscaled time**, because the menu is reachable from a run paused at
+  `timeScale 0` and a podium that stops turning there looks broken.
+
+The backdrop shader is fragment maths on one quad. **No textures, no particles, no post FX,
+nothing that touches the download**, which matters with the data file at 14.83 MB against a 20 MB
+cap. Three calls made after seeing it in play:
+
+- **The surface is BLACK, and the lattice only exists where light falls on it.** `_Ambient` and
+  `_Pulse` are zero on purpose: a permanently visible pattern reads as busy wallpaper, whereas
+  lines that appear under the pointer and under a passing sweep read as a surface being lit.
+- **THREE line families at 60°, not two at 90°**, slanted ~24° so they run down-left. A square
+  grid reads as graph paper. Three axes give a triangular lattice whose lines trace out hexagons
+  without any cell being a hexagon. Combined with `max` rather than `sum` where families cross —
+  summing doubles the brightness and studs every intersection with a bright dot.
+- **uv.x is scaled by the quad's real aspect**, fed from C#, or the cells stretch into lozenges on
+  a backdrop three times wider than it is tall. `fwidth` keeps the lines a constant width on
+  screen so a large quad does not alias into moire.
+
+**TWO SEPARATE THINGS MADE THE POINTER GLOW AN OVAL, and both are the same underlying mistake:
+treating the quad's uv as if it were screen space.** Worth writing down because any future
+full-screen effect on a world quad will hit both.
+
+1. **The distance was not aspect-corrected.** The quad is ~2.4:1, so `length(uv - pointer)`
+   measures over twice as far vertically as horizontally per unit of screen, drawing a wide
+   ellipse. Multiplying x by the aspect puts both axes in quad-heights; because the quad is
+   parallel to the near plane, a circle there is a circle on screen.
+2. **The quad deliberately OVERFILLS the frustum**, so quad uv is not screen uv at all. At a 16:9
+   view the quad is 110 x 46 m against a 71 x 40 m frustum, so the glow was travelling only
+   **64% as far as the cursor horizontally** and never reached the sides. `viewScale` maps screen
+   uv into quad uv before the pointer is handed over.
+
+`_PointerGlow` is therefore in QUAD HEIGHTS, not uv — 0.10 is about 11% of screen height, which is
+a far smaller number than it looks. The idle lattice is a dark grey (0.26); the gold only ever
+arrives with the pointer or a sweep.
+
+The podium is plain black with no rim. A lit rim was tried and simply competed with the backdrop.
+
+**The menu camera is PITCHED DOWN onto the podium** (`pitch`, 18 deg), for a showroom
+three-quarter that shows the roof and the shape of the car rather than a flat side elevation.
+Two things make this work:
+
+- **CarPodium owns the menu camera's rotation**, and that is safe because nothing else in the
+  front end uses it — every menu canvas is Screen Space Overlay, which does not go through a
+  camera at all. Yaw is left alone.
+- **The camera is rotated BEFORE anything is placed.** The backdrop quad and the rig are both
+  positioned from `cam.forward` and `cam.up`, so pitching afterwards would leave the backdrop
+  hanging at an angle off the side of the frame and the podium out of shot.
+
+A horizontal disc seen from above is heavily foreshortened — at 18 deg the 6.2 m podium is only
+1.9 m tall on screen — so it takes far less vertical room than its diameter suggests, which is
+what leaves space for the name and buttons underneath. `drop` accepts NEGATIVE values to raise
+the rig, which is what is wanted once the camera looks down: the podium otherwise sits on the
+view axis, dead centre.
+
+**INTERMITTENT EMPTY PODIUM: `Renderer.bounds` is not safe to read the frame you build a car.**
+Reported 2026-09-01 — switching with the arrows sometimes left the plinth bare. The car was
+spawning correctly every time; it was being thrown out of frame by the code that seats it.
+
+`Renderer.bounds` is world-space and Unity refreshes it on its own schedule. Reading it in the
+same frame the car is reparented — the frame in which `CarDeformation.Awake` also swaps every
+panel's mesh for a clone — can hand back stale bounds sitting at the world ORIGIN. `min.y` then
+comes out near zero, so `lift = mount.y - min.y` becomes the podium's full height and the car is
+launched several metres up. Intermittent, because it depends on what Unity had got round to
+updating.
+
+`MeasureCar` transforms the MESH's own local bounds instead, which is immediate, deterministic,
+and works on an inactive hierarchy — so the seating no longer depends on Unity's update order or
+on whether the showcase happens to be switched on yet. **Reach for mesh bounds over renderer
+bounds any time the object was created or reparented this frame.**
+
+Two supporting fixes found while chasing it: `MenuUI.Show` now calls `SetShowcase` **before**
+`RefreshCars`, so a car is never assembled inside a mount that is still switched off from the
+last visit; and a roster entry with no prefab now logs a warning instead of silently emptying the
+podium, which looks identical to the spawn failing. `lastLift` and `lastShown` are on the
+component for next time — a lift of several metres is the signature of this bug.
+
+**A uGUI button raises onClick on pointer UP, and that broke the first two attempts at
+suppressing the arrow shockwave.** The ring starts on pointer DOWN, so by the time `Sweep` runs
+it is already several frames old — every guard that compared FRAME numbers missed it, and the
+ring kept appearing. Cancelling the most recent ring if it started within a 0.6 s press window
+catches a real click however slowly it is made. Worth remembering generally: **do not pair a
+pointer-down effect with a pointer-up callback using frame equality.**
+
+**Hover goes GOLD, and the LABEL has to move with it.** A `ColorBlock` tints the button's target
+graphic only, so near-white Ink text over a gold hover is a contrast ratio of **1.40 : 1** —
+legible in a screenshot, unreadable in motion. Dark text on the same gold is **12.65 : 1**. uGUI
+has no way to drive anything but the target graphic from a ColorBlock, so `UiKit.LabelTint` is a
+tiny per-button component that swaps the label on pointer enter and exit. Added once and updated
+in place, since the garage repaints its buttons on every purchase.
+
+**The arrow shockwave now starts on RELEASE, not press.** Cancelling it when the button finally
+reported its click was correct but showed a ring that started and then vanished, because a ring
+started on press is visible for as long as the button is held. Release is the same moment uGUI
+raises onClick, so whichever runs first the ring is either never started or is cancelled before
+anything is drawn.
+
+**`ColorBlock.selectedColor` must match `normalColor`, not the highlight.** Unity leaves a clicked
+button SELECTED in the EventSystem, and a selected button keeps drawing `selectedColor` whether
+or not the pointer is still over it — so every button ever clicked stayed lit after the mouse
+moved away, clearing only when something else was clicked. Matching normal keeps the highlight
+belonging to hover alone.
+
+**Clicking anywhere sends a shockwave out from the cursor.** An expanding ring of accent light,
+two slots used alternately so a quick second click starts another rather than teleporting the
+first back to the cursor — which is what one slot does, and it reads as a glitch rather than a
+second click. Radius grows linearly while brightness falls off squared: the ring keeps its speed
+and thins out, which is what a shockwave looks like, where a linear fade visibly reaches zero and
+reads as being switched off. `rippleReach` is 1.6 QUAD HEIGHTS so it carries off every edge even
+from a corner click. Aspect-corrected like the pointer glow, for the same reason — without it a
+shockwave is an ellipse.
+
+The per-frame uniforms go through cached `Shader.PropertyToID` handles rather than the string
+overloads, which hash the name on every call.
+
+**The backdrop belongs to the WHOLE front end, not to the garage.** `MenuUI.Show` calls
+`podium.SetShowcase()` to hide the plinth and the car off the garage page, and never disables the
+`CarPodium` component itself — doing that took the backdrop, the lights and the pointer tracking
+down with it and left every other page as a flat black rectangle. `UiKit.Backdrop`'s opaque image
+is switched off entirely whenever a podium exists, since the world backdrop is drawn behind it.
+
+#### Airborne camera — hold the yaw, pull back. CONFIRMED IN PLAY 2026-09-01
+
+Reported 2026-09-01, once rolls became possible: the camera "goes kinda crazy" mid-spin. Two
+causes, and the first is the interesting one.
+
+**`UpdateYaw` falls back to the car's FACING below `velocityYawThreshold`.** That fallback is
+right for a parked car and catastrophic in the air: at the apex of a jump the flat velocity drops
+below the threshold, so the camera starts tracking the facing of a car that is barrel-rolling
+through a full circle every second — and the whole world spins. **While airborne it now holds the
+yaw instead**, which is what makes a roll read as the CAR rotating rather than the camera.
+
+The rest is framing: `airDistance` +5 m, `airHeight` +2.2 m and `airFov` +7°, eased in on an
+`airBlend`. Pulling back is what turns a spin into something readable — the car stays whole in
+frame instead of filling it and thrashing. `airYawFactor` 0.12 keeps a trace of tracking so a
+genuine change of direction is still followed, gently.
+
+**`airBlendSharpness` is deliberately LOW (1.8).** The blend must not be able to complete in the
+time the wheels are off over a crest, or ordinary rough ground lurches the camera in and out.
+And it keys off `Touching`, not `Grounded`, so a car sliding on its roof gets the grounded framing
+back rather than staying zoomed out while it grinds along.
+
+Air rotation was calmed at the same time: `maxAirSpin` 420 → **190 °/s** (about half a rotation a
+second — enough to roll, calm enough to watch) and `airAngularDamping` 0.04 → **0.30**. At 0.04 a
+spin was preserved so faithfully that a knock on a ramp lip had the car tumbling for the whole
+flight; 0.3 keeps the momentum and lets it bleed, which reads as driven rather than thrown.
+
 #### A code-built menu list must be laid out from a BAND, not a fixed step
 
 Found 2026-08-31, when the truck made three cars: the garage's blurb, OWNED line and CC-BY credit
@@ -1688,6 +2240,308 @@ roster this size, but that is the point at which it becomes worth it.
 The general rule, because this project builds all its UI in code: **anything driven by an array
 whose length can change needs a layout that reads that length.** A hand-placed y is a promise
 that the array will never grow.
+
+### Bullseye — the dartboard map, built 2026-09-01 — CONFIRMED IN PLAY
+
+Ethan's design, from a side-view sketch: bomb down a long ramp, launch off a kicker, fly, and land
+on a giant archery target dished to catch you. `tools/blender/build_dartboard.py` +
+`Track/DartboardScore.cs`. **20,380 triangles** for the whole map.
+
+**Looked online first, as asked, and it had to be generated.** Every dartboard model published is
+a ~45 cm wall prop: built to be seen from two metres with a texture doing the work, licensed
+CC-BY at best (Sketchfab) or explicitly non-redistributable (TurboSquid, CGTrader), which is fatal
+for a public repo. But the licence is the least of it — **the game needs the rings as NUMBERS.**
+Scoring by where a car lands needs ring radii and segment angles, and a downloaded mesh only ever
+gives triangles. Generation is not the fallback here, it is the only thing that answers the brief.
+
+**The face is a standard 5-colour ARCHERY target, not a dartboard.** Ten equal concentric rings,
+gold in the middle, scoring 10 down to 1, no radial divisions. It began as a real dartboard and
+that was worse in both directions: a dartboard's single band covers most of the disc, so scoring
+needed 20 numbered segments layered on top of the rings just to spread results out, and the face
+is visually busy at 200 m across. Ten graded rings do the same job with a third of the machinery,
+and a ring simply IS a score rather than a multiplier on one.
+
+Thin boundary lines are not decoration either — rings 10/9 are both gold and 8/7 are both red, so
+without a line each pair reads as one band. Real targets print black lines, and **white lines
+inside the black rings**, because a black line on black is not a line.
+
+**The layout is arithmetic, not eyeballing.** `flight_range()` is plain projectile motion, and the
+report prints where a car lands for a range of exit speeds. The gap is then set from that table:
+
+| Exit speed | Lands | Score |
+| --- | --- | --- |
+| 26 m/s | 98 m | 2 — white |
+| 32 m/s | 129 m | 5 — blue |
+| 36 m/s | 151 m | 8 — red |
+| ~40 m/s | ~178 m | **10 — GOLD** |
+| 44 m/s | 200 m | 8 — red |
+
+**The ramp produces far more speed than `topSpeed` suggests, and that is the whole point.** 230 m
+of drop over 430 m is a **28° average, 39° peak** — a black-run gradient. `topSpeed` caps ENGINE
+power, not gravity, so the car keeps accelerating all the way down: `m·g·sin(28°) − coastDrag`
+over 430 m is roughly **58 m/s** for the E30, against its nominal 32.
+
+That makes **braking on the runout the actual skill of the map.** The board is sized so every
+speed from ~26 m/s up lands somewhere on it, and the gold needs deliberate throttle control
+rather than just holding it down. **Change `--kicker-angle`, `--gap` or `--drop` and re-read the
+table before believing anything.**
+
+Decisions worth keeping:
+
+- **The kicker is a PARABOLA, `z = rise * u²`.** Slope zero where it meets the flat runout, so
+  there is no crease to unsettle the suspension just before launch, and steepest exactly at the
+  lip. The rise follows from the exit angle rather than being guessed.
+- **The board is one mesh PER COLOUR, not a texture.** A ring edge has to be exact on a 196 m
+  disc; a texture large enough to keep it crisp would be enormous and would still blur under a
+  camera that ends up a few metres from it. Seven colours, seven draw calls, exact at any size.
+- **THE SKIRTS ARE NOT DECORATION.** First render had the ramp and the board as floating ribbons:
+  a heightfield has a top and no underside, and this map is seen from below and from the side for
+  the whole flight. The board gets a skirt plus a **downward-wound bottom cap** — an unwound cap
+  is invisible from underneath, which defeats the point of adding one. The ramp's skirt gets its
+  own vertex per row, never a shared pair, because reusing two corners is what built the giant
+  slab beside Quarry's start bay. **Third time this has come up; do not build generated terrain
+  without it.**
+- **`RunScore.Award()` was added for this**, so a rule that belongs to ONE map does not have to
+  live inside `RunScore`. Damage, parts, airtime and feats apply to every run and belong there; a
+  dartboard does not, and putting it there would make every map pay to check a board it has not
+  got. The combo multiplier is deliberately not applied — a bull is worth what it is worth.
+- **Landing is detected separately from airtime, deliberately.** Sharing `RunScore`'s airborne
+  edge would let a bump on the run-up score a dartboard hit. `minLandingSpeed` and `rearmDelay`
+  together make a car that lands, bounces and lands again count as ONE dart.
+- **The ring table is duplicated across Python and C#** with no sane way to share it. The
+  generator therefore PRINTS its table in metres, `DartboardScore.lastDistance` reports in metres,
+  and `OnDrawGizmosSelected` draws the C# rings over the geometry. If a landing scores the wrong
+  ring, that mismatch is the first thing to check.
+
+### Falling boulders — built and CONFIRMED IN PLAY 2026-09-01
+
+`Track/FallingBoulders.cs`. Boulders come down the valley sides and roll across the track.
+
+- **Spawned relative to the PLAYER, not from hand-placed points.** A 1,800 m course would need
+  dozens of markers, they would need re-placing for every map, and each is a thing to get wrong
+  in a scene file. Spawning around the car works on any course and costs nothing while nobody
+  is there.
+- **BIG AND FEW BEATS SMALL AND MANY**, and it is the rare change that improves the look and the
+  cost at the same time. `radiusRange` 2.4-5.2 m (up to **10.4 m across, 40% of the corridor**),
+  `maxLive` **16**, `interval` 0.9 s. One boulder that blocks half the road is a bigger event than
+  six that bounce past, and it is five fewer rigidbodies. **Reach for size before count.**
+
+- **Dropped ahead, up the side, and AIMED.** `aheadRange` 65-175 m, `sideRange` 32-95 m,
+  `launchSpeed` 20-40 m/s. Two earlier attempts were wrong in opposite directions and both were
+  found by playing it: a full 360° ring put rocks where they could not matter and half of them
+  behind the car; 130-330 m ahead was so far down the track that the fall was over before arrival.
+
+- **THE SPEED IS SOLVED FOR, NOT PICKED — this is what stopped them sailing over the track.**
+  Reported 2026-09-01: "they usually aim too high". A boulder launched horizontally at a fixed
+  speed from up the mountainside is in the air for however long the FALL takes, and that was
+  never in the arithmetic:
+
+  | Spawn height | Fall time | Lands at a fixed 30 m/s | Speed needed to land at 60 m |
+  | --- | --- | --- | --- |
+  | 15 m | 1.75 s | 52 m | 34.3 m/s |
+  | 30 m | 2.47 s | 74 m | 24.3 m/s |
+  | 50 m | 3.19 s | **96 m** | 18.8 m/s |
+  | 80 m | 4.04 s | **121 m** | 14.9 m/s |
+
+  Against a 26 m corridor, a rock from 50 m up overshot by nearly four road widths. `AimedLaunch`
+  now takes the fall time from the height difference and derives the horizontal speed as
+  distance over that time, clamped into `launchSpeed` — so the band is what it is ALLOWED to
+  land in rather than a value chosen independently of where it is aimed.
+
+  Two smaller corrections went with it: the intercept uses **HORIZONTAL** distance, because the
+  vertical part of the trip is gravity's job and is already in the fall time, and including it
+  inflated the estimate and led the player too far. Free fall is still an approximation — a
+  boulder bounces down a slope rather than dropping — but it is the right shape of answer.
+
+- **They LEAD the player, and that is what made the hazard work.** Aiming at where the car IS
+  always lands behind a moving target — at 25 m/s a four second flight arrives 100 m late, which
+  is why the first version read as scenery however much of it there was.
+
+  `AimedLaunch` is a **two-pass fixed-point intercept**: guess the flight time from the current
+  distance, move the target along the car's velocity by that much, re-time against the new
+  target. That is the whole algorithm. The closed-form quadratic would be false precision, because
+  a boulder bouncing down a rock face does not travel in a straight line anyway.
+
+  **`aimSpread` (16 m) is load-bearing, not polish.** At 0 every boulder is a homing missile and
+  the hazard becomes a scripted death that arrives however well the player drives. The spread is
+  what makes it something to read: most miss, some connect, and the near misses are the good ones.
+  It is applied across and along the course, never vertically — a boulder that misses upward is
+  just wrong. `lead` above 1 over-leads and lands in front, which is the one that makes you brake.
+
+  The player's Rigidbody is **cached and refreshed when the car changes**. Holding one forever
+  would leave the aim reading a destroyed car's velocity — zero — which silently disables the
+  lead and looks exactly like the feature never working.
+
+- **BOULDERS ON THE ROAD: the fix is a SECOND raycast, and the obvious test does not work.**
+  Reported after the first play. The tempting check is "is the spawn point higher than the car" —
+  and it is wrong on a descending course, because a point 300 m ahead is ~45 m BELOW the car
+  whether it is on the road or high up the wall. That test rejects every forward spawn.
+
+  `TrySpawn` therefore casts twice: once straight ahead of the car at the same distance along the
+  course, to get the height of the TRACK at that station, and once at the candidate point. The
+  spawn is accepted only if it stands `minRise` (10 m) above the track. Splitting the offset into
+  along-course and across-course components is what makes this possible, and it removes the
+  descent from the question entirely — leaving only "is this up the side".
+
+  This needs no knowledge of the corridor's width, no layer or name matching, and works on any
+  map. `lastResult` reports `"on the track (rise N m)"` when it rejects, so the threshold can be
+  tuned by watching rather than guessing.
+- **The rim is found by RAYCASTING, not assumed.** A cast down from high above a point off to the
+  side reports whatever the wall is at that station, so this knows nothing about how the course
+  was generated and cannot go stale when the generator changes. No ground found = skip, because a
+  boulder spawned in mid-air just falls forever.
+- **Meshes are GENERATED at Awake, not imported.** A subdivided icosahedron with hashed per-vertex
+  displacement: 80 triangles, flat shaded, which is the faceted silhouette that makes a rock read
+  as a rock rather than a dune — the same finding as the course boulders. It **adds nothing to the
+  download**, which matters more than usual with the data file at 14.83 MB against a 20 MB cap.
+- **Displacement is INWARD only** (`1 - amount * hash`). Pushing vertices outward can invert a
+  face on a mesh this coarse. Same one-sided rule that stopped `CarDeformation.crumple` spiking
+  panels, for the same reason.
+- **The lump is hashed from the DIRECTION, quantised.** Hashing per face would move the three
+  corners meeting at a vertex to three different places and tear the rock into 80 loose triangles
+  — exactly the co-located-vertex problem `crumple` has, in a different guise.
+- **Convex hulls are cooked ONCE at Awake for four variants, then pooled.** Cooking at runtime is
+  a frame hitch, which is why detached panels get a BoxCollider instead; here it is paid at load
+  and never again because instances are recycled.
+- **Its own pool, deliberately NOT `DebrisPool`.** Sharing one cap would mean a big crash evicts
+  every boulder, or a rockfall evicts the panels just knocked off the car. Two hazards with
+  different lifetimes competing for one cap is a bug that would be misdiagnosed as either system
+  misbehaving. The rigidbody BUDGET is still shared — see below.
+
+**Rigidbody budget: 16 boulders, and it went UP to 40 and back down again.** Briefly set to
+`maxLive` 40 at `interval` 0.35 s, then cut to **16 at 0.9 s** once the boulders got big — bigger
+rocks do the same job with fewer bodies. Steady state is 16 boulders plus four cars and up to 24
+pieces of debris: **up to 44 against a documented budget of 40**, which is a rounding error rather
+than the 68 it briefly was.
+
+Still worth re-measuring: the 60 FPS Jasper Lake result was taken **without any of this**, and the
+standing rule is that the numbers get re-measured after anything that changes scene scale.
+
+**`FallingBoulders.Live` is published to `PerfReadout` for exactly this reason.** The Inspector
+does not exist on a Chromebook, and the live count is the one number that decides whether this is
+affordable there. Turn on dev mode, read `FPS` / `worst` / `N boulders live` together, and note
+that **`worst` is the number that will move first** — a physics spike shows up as one long frame
+long before the average FPS drops.
+
+Levers if it does drop, in the order worth trying:
+
+1. **`maxLive`** — linear in physics cost and the biggest single lever.
+2. **`collisionDetectionMode`** — `ContinuousDynamic` sweeps every step and is the most expensive
+   per-boulder setting. `ContinuousSpeculative` is materially cheaper; the risk is a fast boulder
+   tunnelling through the road, which is why it is not the default.
+3. **Tick "Enable GPU Instancing" on the rock material.** 40 boulders sharing four meshes and one
+   material collapse to four instanced draw calls instead of forty. Free, and worth doing whether
+   or not the frame rate is a problem.
+4. `lifetime` and `restDelay` — shorten to raise turnover rather than the live count.
+- **Mass scales with radius SQUARED, not cubed, and is capped. The realistic number does not
+  work and this is the reason.** True volume scaling at rock's 2,700 kg/m³ makes a 3.5 m radius
+  boulder **485 tonnes** — a 404:1 mass ratio against the 1,200 kg car. **PhysX solves a contact
+  badly past roughly 10:1**: the car jitters, gets squeezed through the ground, or is launched,
+  and the boulder becomes literally immovable, which reads as a moving wall rather than a rock.
+  Even a generously light 900 kg/m³ is still 32:1 at the SMALL end of the range.
+
+  `massAtOneMetre * r²`, capped by `maxMass` 9,000, keeps a big boulder decisively heavier than a
+  small one while staying solvable:
+
+  | Radius | Across | Mass | Ratio vs car |
+  | --- | --- | --- | --- |
+  | 1.5 m | 3.0 m | 2,475 kg | 2.1:1 |
+  | 2.5 m | 5.0 m | 6,875 kg | 5.7:1 |
+  | 3.5 m | 7.0 m | 9,000 kg (capped) | 7.5:1 |
+
+  **Do not "fix" this back to cubic.** It is a case where the physically correct answer and the
+  working answer differ and the working one wins. The same 10:1 rule applies to anything heavy
+  added later.
+- **`behindDistance` no longer needs clamping**, now that every boulder spawns ahead. While the
+  ring version was in, it did: a boulder dropped 170 m behind was outside a 140 m cull the
+  instant it appeared, so it was recycled on its first frame every time — wasting roughly half of
+  all spawns while the readout cheerfully reported them as dropped. Worth remembering as a shape
+  of bug rather than a live one: **a spawn radius and a cull radius set in different Inspector
+  sections will silently fight each other**, and the symptom is "it says it is working and
+  nothing appears".
+- **`inwardSpeed` is the range that makes it not repetitive.** Low end stops on the shoulder, high
+  end carries right across the track. This is the "some go far in, some go shallow" requirement
+  and it is one field.
+- **`ContinuousDynamic` collision detection.** A 2 m rock at 20 m/s moves 40 cm per physics step;
+  discrete detection tunnels it straight through the road and the car.
+- **Layer Default**, so `CarDamage` treats it as damaging and the wheel SphereCasts see it — a
+  settled boulder is a real obstacle you can drive over or hit.
+
+Two of the three pre-flight concerns held up; the third did not survive contact:
+
+1. **Rigidbody count** — handled by the pool and `maxLive`.
+2. **Seen coming** — `aheadRange` (70-150 m) is the telegraph. No dust or sound yet.
+3. **"The AI cannot see it"** — true, and it turns out not to matter. `TrafficDriver`'s hazard
+   sweep runs against whatever colliders exist at the moment it casts, and a boulder is on
+   Default like everything else, so traffic WILL sometimes swerve for one. It will also
+   sometimes be flattened by one it never saw. Both are good.
+
+### Air rotation — why rolls were impossible, fixed 2026-09-01
+
+Reported: cars "kinda just don't rotate" in the air, hold whatever attitude they launched at, and
+have to be turned by hand. **The cause was `m_AngularDamping: 2` on the Rigidbody**, applying in
+the air exactly as it does on the ground:
+
+| | damping 2 | damping 0.04 |
+| --- | --- | --- |
+| 360°/s spin after 0.25 s | 216°/s | 356°/s |
+| after 0.50 s | **135°/s** | 353°/s |
+| after 1.00 s | **51°/s** | 346°/s |
+
+A roll needs ~360°/s sustained for a second. At damping 2 the car got through about a third of one
+before the spin was eaten, so **any rotation carried off a ramp was gone before it could become
+anything** — which is precisely what "you have to rotate them manually" describes.
+
+**The damping is now SWITCHED, not constant**: `groundedAngularDamping` (2, unchanged — it is what
+stops the body wobbling on its springs) and `airAngularDamping` (0.04). Two details:
+
+- **It keys off `Touching`, not `Grounded`.** The question is "is this in free flight". A car
+  sliding along on its roof has no wheel down but is very much in contact, and air damping there
+  would leave it spinning freely against the scenery.
+- **`maxAirSpin` caps what INPUT can build, never the spin itself.** A crash or a ramp lip can
+  legitimately throw the car faster than the cap and that rotation is kept; air control just stops
+  adding to an axis already over it. Clamping `rb.angularVelocity` instead would throw away
+  exactly the momentum this change exists to preserve.
+
+**`CarController.Touching` is new, and it is not the same question as `Grounded`.** `Grounded` is a
+WHEEL test — correct for suspension, drive and grip, and wrong for "has the car landed". A car that
+comes down on its roof, its side, or across a boulder has landed and has no wheel touching
+anything, so airtime scored on `Grounded` ran through the entire crash and only paid out if the car
+happened to settle on its tyres. `Touching` is `Grounded || bodywork in contact`, driven from
+`OnCollisionStay` with a **0.15 s expiry rather than a Stay/Exit pair** — `OnCollisionExit` is easy
+to miss when a collider is disabled, destroyed or teleported, and a stuck flag would end airtime
+permanently.
+
+`minAirTime` also went 0.45 → **0.8 s**: at 0.45 the counter still flickered on rough ground, and
+0.8 is about the shortest thing that reads as a jump rather than a bump.
+
+### Airtime scoring — built 2026-09-01, CONFIRMED IN PLAY
+
+Time off the ground earns gears, and the counter climbs live while the car is in the air.
+
+- **Paying only on LANDING is the whole design.** A jump that ends in a ravine, or with the car
+  falling out of the world, pays nothing — otherwise the best way to farm gears is to drive off
+  the map and wait. It also gives the counter somewhere to go: it climbs while the outcome is in
+  doubt and banks at the moment the risk resolves.
+- **`minAirTime` (0.8 s) is what separates a jump from a bump.** The wheels leave the ground over
+  every crest and kerb on these courses, so without a floor the counter flickers the entire way
+  down the hill. 0.45 was not enough on rough ground.
+- **It ends on `Touching`, not `Grounded`** — see the air-rotation section. Landing upside down is
+  landing.
+- **`maxAirTime` (9 s) exists because "not grounded" is also true** of a car wedged on a rock,
+  resting on its roof, or falling out of the world. Without a cap those pay unboundedly.
+- **The live counter is on the DYNAMIC canvas.** It changes every frame while airborne, and a
+  uGUI canvas rebuilds its whole batch when anything on it changes — putting it beside the gear
+  counter would rebuild the counter every frame of every jump.
+- **It is fixed to the screen, unlike the score popups, which are pinned in world space.** A
+  jumping car crosses most of the screen and rotates while it does it, so a label stuck to it is
+  the one thing you cannot read at the moment you want to.
+- **The size EASES to its target rather than snapping**, so crossing `airGoldAt` reads as the
+  number swelling rather than as a different label appearing.
+- **`SetText("AIRTIME\n+{0}", n)`**, the composing overload, never concatenation — this runs every
+  frame of every jump and string concatenation would allocate on all of them.
+- The combo multiplier **does** apply, so a jump taken mid-rampage is worth more. Consistent with
+  damage, and it makes chaining a crash into a jump pay.
 
 #### The HUD is built in code, and that is deliberate
 
@@ -1833,6 +2687,48 @@ dark interior**, not deformation. Hood gone shows a dark engine bay; door gone s
 cabin; glass simply disappears. That is exactly what `InteriorShell` plus real panel
 detachment produces, which is why this approach was chosen over faking it.
 
+### Fourth car — Lamborghini Aventador, added 2026-09-01. The fastest in the game.
+
+`Assets/Art/Vehicles/Aventador/aventador-split.fbx`, **CC-BY, Arion Digital — attribution
+required in-game**, see CREDITS.md. 10,374 tris in, **11,131 after splitting** (the shell gains an
+InteriorShell). Authored in **centimetres**, so `--scale 0.01` on conversion.
+
+**⚠ THE DOWNLOAD IS AN ASCII FBX, AND BLENDER CANNOT OPEN ONE.** `import_scene.fbx` refuses with
+"ASCII FBX files are not supported" and always has. **Unity imports them happily**, which is the
+trap: the model looks completely fine in the Editor while the entire Blender pipeline —
+inspection, splitting, previews, the Unity-setup numbers — is unavailable.
+
+`tools/blender/fbx_ascii_to_binary.py` was written for it. The alternatives were all worse: no FBX
+converter exists on this machine (Autodesk's was discontinued years ago), and re-exporting through
+a second Unity in batch mode fights the project lock whenever the Editor is open. ASCII FBX is a
+plain regular text format and the parts that matter are four arrays per mesh, so parsing it
+directly is the cheap answer. It reads meshes, names, local transforms, UVs and **material names**
+— the last of those matters because `split_car.py` decides what is glass from the material name
+and `CarGlass` empties submeshes by it. **Run it first whenever Blender refuses a file.**
+
+The split went unusually well because the model is well built:
+
+| | |
+| --- | --- |
+| Wheelbase / track | **2.75 m / 1.70 m** (real car: 2.70 / 1.72) |
+| Front / rear wheels | 0.69 m / 0.73 m across — **which is how the nose direction was found** |
+| Objects | Body, Glass, four per-corner wheels, and a Collider proxy |
+| Layout | `--nose +z --up y`, giving the P72's proven arrangement |
+
+Two decisions worth keeping:
+
+- **The 122-triangle `Collider` proxy is DROPPED.** This project builds its own three collision
+  boxes, and a mesh collider on a car is the wrong shape regardless.
+- **Glass is its own MATERIAL**, so `CarGlass` works on this car — unlike the P72, where the
+  windows are painted into the body texture and the component has nothing to empty.
+
+**This is where the face-size guard finally earned its place.** It shipped as precautionary and
+sat unused across three cars; the Aventador's front bumper region rejected 2 oversized faces on
+the first run. `split_car.py`'s comment is updated to say so.
+
+**Angles: approach 24.9°, departure 29.7°, breakover 24.6°** — a low front, as a supercar should
+have. It will ground its nose on things the E30 clears.
+
 ### Third car — LCT 3000 '95 box truck, added 2026-08-31 — **WIRED AND DRIVING**
 
 `Assets/Art/Vehicles/LCT3000/lct3000-split.fbx`, **CC-BY, Daniel Zhabotinsky — attribution
@@ -1889,6 +2785,64 @@ leaving the start bay.
 30.4 / 27.2 / 21.8. The truck will belly out on quarry rocks the E30 clears. That is correct for
 a box truck and is left as character, not fixed.
 
+#### Deformation on a big vehicle — the defaults are tuned to the E30's SIZE and DENSITY
+
+Reported 2026-09-01: the truck "barely gets dented". It is not a bug and nothing is broken —
+`CarDeformation`'s defaults are sized for a 4.16 m car and every one of them is a length in world
+metres, so they shrink in relative terms as the vehicle grows. Measured, not guessed:
+
+| | E30 Body | Truck Body | Ratio |
+| --- | --- | --- | --- |
+| Vertex density | **90.6 /m²** | **30.7 /m²** | 0.34x |
+| Average edge length | **0.104 m** | **0.219 m** | 2.1x |
+| Surface area | 21.5 m² | 134.8 m² | 6.3x |
+| Height | 1.21 m | 2.84 m | 2.3x |
+
+Three separate things follow, and only the second is obvious:
+
+1. **`maxDisplacement` is the binding constraint, and it is a fixed 1.0 m.** That is 83% of the
+   E30's height but only 35% of the truck's, so the same number reads as a wrecked car and a
+   lightly scuffed truck. Confirm before changing anything else: `Dent()` receives the **uncapped**
+   damage — `maxDamagePerImpact` gates detachment only — so at 3,000 kg the truck already asks for
+   `1777 x 0.0022 = 3.9 m` and is clamped to 1.0. **The request is 4x the cap, so
+   `strengthPerDamage` does literally nothing here.** Raising `maxDisplacement` is the whole fix.
+2. **`radius` is also absolute**, so a 0.55 m crater spans 26% of the E30 and 18% of the truck.
+3. **`crumpleScale` 0.22 is a latent BUG on this model.** The rule is that crumple noise must be
+   coarser than the vertex spacing or it degenerates to per-vertex jitter and spikes the mesh.
+   The E30's spacing is 0.104, so 0.22 is a safe 2.1x. **The truck's spacing is 0.219 — 0.22 is
+   1.0x, exactly the failure case.** It needs ~0.46 to keep the same margin.
+
+**The truck cannot punch through its interior the way the E30 could**, because it has no separate
+`InteriorShell` — its cargo liner and cab are welded into the same `Body` mesh and deform with the
+paint. So `shellRadiusScale` / `shellDepthScale` do nothing on it, and the depth ceiling that
+governs the E30 simply does not apply.
+
+**What still limits it, and the trade being made:** at 30.7 verts/m² a dent has roughly a third
+the geometry to fold, so it reads as a few broad facets rather than crumpled metal. The real fix
+is subdividing the body at split time — and it is **deliberately not being done**, because
+`carcrash.data.unityweb` is 14.83 MB against a hard 20 MB cap and this would add thousands of
+triangles to the file that is already nearly full. Revisit only after the TMP font trim frees
+space, and measure the download afterwards.
+
+**General rule for the next vehicle: every `CarDeformation` length scales with the vehicle, and
+`crumpleScale` scales with its MESH, not its size.** Take `maxDisplacement` and `radius` off the
+height ratio against the E30, and `crumpleScale` off ~2x the measured average edge length.
+
+**CONFIRMED IN PLAY 2026-09-01: the truck crumples.** Values that did it, on the truck's
+`CarDeformation` only — the E30 and P72 are untouched:
+
+| Field | E30 | Truck | Derived from |
+| --- | --- | --- | --- |
+| `maxDisplacement` | 1.0 | **1.8** | height ratio 2.84 / 1.21 |
+| `radius` | 0.55 | **1.0** | same |
+| `crumpleScale` | 0.22 | **0.46** | 2.1x the truck's 0.219 m average edge |
+| `crush` | 0.75 | **0.85** | taste |
+
+Part health went back UP at the same time (bumpers 160/140, doors 140, box doors 130, mirrors 60,
+wheels 150) with `maxDamagePerImpact` back to 60, so the truck holds its panels and folds instead
+of shedding them. That combination — high health, high displacement — is what a big vehicle
+should look like, and it is the opposite of the first attempt.
+
 #### Damage on a heavy vehicle — mass changes the impulse, not just the feel
 
 **A 3,000 kg truck reports ~2.5x the collision impulse of the 1,200 kg E30 at the same speed**,
@@ -1910,6 +2864,14 @@ resting margin, then set destructibility with `maxDamagePerImpact` and part heal
 backwards — lowering `minimumImpulse` to make something more destructible — makes a heavy vehicle
 take phantom damage from standing still.
 
+**"More destructible" is two unrelated systems, and they are tuned in different components.**
+Worth stating because it was got wrong once: *panels coming OFF* is `CarDamage` — part health and
+`maxDamagePerImpact`. *Panels CRUMPLING* is `CarDeformation` — `maxDisplacement` and `radius`.
+They share only the damage number. On the truck the answer was the second: parts back to high
+health so they stay on, and deformation turned right up so the body folds instead. Ask which one
+is meant before touching either, because turning up the wrong one produces a car that sheds its
+panels while remaining perfectly straight.
+
 ### Measured: decimation does not rescue a high-poly base
 
 Tested on a 358k-tri showcase model (three.js Ferrari, dev rig only — **not shipped**,
@@ -1928,11 +2890,13 @@ fit. This is the single most important constraint when picking the base.
 
 | Script | Job |
 | --- | --- |
+| `fbx_ascii_to_binary.py` | Convert an ASCII FBX into one Blender can open. Run FIRST if import_scene.fbx refuses the file. |
 | `inspect_model.py` | Print objects, verts, tris, dimensions, materials. Run before anything else. |
 | `split_car.py` | Join → decimate → carve panels by region → set hinge origins → interior shell → export FBX. |
 | `car_bounds.py` | Print every part's bounding box in the CAR's local space. Run before placing anything inside the bodywork. |
 | `preview_split.py` | Render the split FBX with each panel colour-coded. **Always look at this**; the triangle report cannot tell you a region cut a door in half. |
 | `build_course.py` | Generate a downhill crash course: descending corridor, terraced quarry walls, rollers, obstacles, stopping bowl. Renders three previews. |
+| `build_dartboard.py` | Generate Bullseye: ramp, kicker, and a 180 m dished dartboard. Prints the flight table and the ring radii. Renders three previews. |
 
 ```bash
 BL="/c/Program Files (x86)/Steam/steamapps/common/Blender/blender.exe"

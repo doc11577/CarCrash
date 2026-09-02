@@ -144,7 +144,7 @@ Transform:
   m_GameObject: {fileID: 723069404}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 1, z: 0, w: 0}
-  m_LocalPosition: {x: -20.7, y: 0, z: -11.89}
+  m_LocalPosition: {x: -17.42, y: 0, z: -16.48}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -218,7 +218,7 @@ MonoBehaviour:
   - {r: 0.15, g: 0.55, b: 0.25, a: 1}
   - {r: 0.85, g: 0.62, b: 0.1, a: 1}
   - {r: 0.35, g: 0.13, b: 0.55, a: 1}
-  scoreTrafficDamage: 0
+  scoreTrafficDamage: 1
   spawned: 0
 --- !u!114 &1493329991
 MonoBehaviour:
@@ -257,6 +257,8 @@ MonoBehaviour:
   popupLife: 1.1
   popupRise: 1.4
   popupSize: 34
+  airtimeSize: 46
+  speedoSize: 62
   boundToScore: 0
   shownGears: 0
 --- !u!114 &1493329993
@@ -273,6 +275,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RunScore
   playerCar: {fileID: 0}
   gearsPerDamage: 1
+  gearsPerPvpDamage: 0.06
   gearsPerPartHealth: 5
   comboWindow: 2.5
   comboPerHit: 0.25
@@ -300,6 +303,12 @@ MonoBehaviour:
   scoreReadout: 0
   multiplierReadout: 0
   featsEarned: 0
+  minAirTime: 0.45
+  gearsPerAirSecond: 26
+  airGoldAt: 65
+  maxAirTime: 9
+  airColour: {r: 1, g: 0.78, b: 0.15, a: 1}
+  pvpColour: {r: 1, g: 0.42, b: 0.3, a: 1}
 --- !u!114 &1493329994
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -416,6 +425,11 @@ MonoBehaviour:
   rotationSharpness: 11
   yawSharpness: 3.5
   velocityYawThreshold: 2.5
+  airDistance: 5
+  airHeight: 2.2
+  airFov: 7
+  airYawFactor: 0.12
+  airBlendSharpness: 1.8
   avoidGeometry: 1
   collisionMask:
     serializedVersion: 2

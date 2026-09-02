@@ -96,6 +96,25 @@ public static class PlayerWallet
         return true;
     }
 
+    /// <summary>The raw owned-id list, for <see cref="SaveCode"/>. Empty when nothing is bought.</summary>
+    public static string OwnedIds => PlayerPrefs.GetString(OwnedKey, "");
+
+    /// <summary>
+    /// Overwrite the whole wallet from a save code. Only <see cref="SaveCode"/> should call it,
+    /// and only after the code has been validated — this does no checking of its own beyond
+    /// refusing obvious nonsense, because a caller that has not verified a checksum has no
+    /// business replacing the player's progress.
+    /// </summary>
+    public static void Restore(int gears, int bestRun, string ownedIds)
+    {
+        if (gears < 0 || bestRun < 0) return;
+
+        PlayerPrefs.SetInt(GearsKey, gears);
+        PlayerPrefs.SetInt(BestRunKey, bestRun);
+        PlayerPrefs.SetString(OwnedKey, ownedIds ?? "");
+        PlayerPrefs.Save();
+    }
+
     /// <summary>Wipe the balance, the best run and every purchase. For testing.</summary>
     public static void ResetAll()
     {

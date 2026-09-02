@@ -291,6 +291,11 @@ MonoBehaviour:
   rotationSharpness: 11
   yawSharpness: 3.5
   velocityYawThreshold: 2.5
+  airDistance: 5
+  airHeight: 2.2
+  airFov: 7
+  airYawFactor: 0.12
+  airBlendSharpness: 1.8
   avoidGeometry: 1
   collisionMask:
     serializedVersion: 2
@@ -460,6 +465,7 @@ GameObject:
   - component: {fileID: 538975030}
   - component: {fileID: 538975031}
   - component: {fileID: 538975032}
+  - component: {fileID: 538975033}
   m_Layer: 0
   m_Name: GameManager
   m_TagString: Untagged
@@ -536,6 +542,8 @@ MonoBehaviour:
   popupLife: 1.1
   popupRise: 1.4
   popupSize: 34
+  airtimeSize: 46
+  speedoSize: 62
   boundToScore: 0
   shownGears: 0
 --- !u!114 &538975029
@@ -552,6 +560,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RunScore
   playerCar: {fileID: 0}
   gearsPerDamage: 1
+  gearsPerPvpDamage: 0.06
   gearsPerPartHealth: 5
   comboWindow: 2.5
   comboPerHit: 0.25
@@ -579,6 +588,12 @@ MonoBehaviour:
   scoreReadout: 0
   multiplierReadout: 0
   featsEarned: 0
+  minAirTime: 0.45
+  gearsPerAirSecond: 26
+  airGoldAt: 65
+  maxAirTime: 200
+  airColour: {r: 1, g: 0.78, b: 0.15, a: 1}
+  pvpColour: {r: 1, g: 0.42, b: 0.3, a: 1}
 --- !u!114 &538975030
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -623,7 +638,7 @@ MonoBehaviour:
   - {r: 0.15, g: 0.55, b: 0.25, a: 1}
   - {r: 0.85, g: 0.62, b: 0.1, a: 1}
   - {r: 0.35, g: 0.13, b: 0.55, a: 1}
-  scoreTrafficDamage: 0
+  scoreTrafficDamage: 1
   spawned: 0
 --- !u!114 &538975032
 MonoBehaviour:
@@ -641,6 +656,46 @@ MonoBehaviour:
   spawnPoint: {fileID: 1318481589}
   dropHeight: 0.6
   spawnedCar: 
+--- !u!114 &538975033
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 538975024}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7ae31946eb5e39c4d8bf8c94a301666e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FallingBoulders
+  interval: 0.6
+  maxLive: 24
+  aheadRange: {x: 65, y: 175}
+  sideRange: {x: 32, y: 95}
+  minRise: 10
+  dropHeight: 10
+  probeHeight: 250
+  groundMask:
+    serializedVersion: 2
+    m_Bits: 1
+  radiusRange: {x: 2.4, y: 5.2}
+  massAtOneMetre: 1100
+  maxMass: 12000
+  variants: 2
+  lumpiness: 0.3
+  launchSpeed: {x: 20, y: 40}
+  lead: 1
+  aimSpread: 0
+  spin: 320
+  lifetime: 26
+  restSpeed: 0.6
+  restDelay: 10
+  behindDistance: 140
+  live: 0
+  spawnedTotal: 0
+  lastResult: (nothing yet)
+  rockMaterial: {fileID: 0}
+  rockPhysics: {fileID: 0}
 --- !u!1 &832575517
 GameObject:
   m_ObjectHideFlags: 0

@@ -137,11 +137,12 @@ GLASS_HINTS = ("glass", "window", "windscreen", "windshield")
 # face density -- the LCT 3000's cargo-bay liner has metre-wide flat faces sharing a mesh
 # with a finely modelled cab.
 #
-# HONEST STATUS: precautionary. It has never actually fired on any of the three cars split
-# so far. It went in while chasing a PartMirrorL that appeared to span the whole truck,
-# which turned out to be a stale Blender bound_box in the measuring script rather than bad
-# geometry -- so do not treat this as a fix for an observed bug. If it ever prints its
-# rejection line, that is new information worth looking at.
+# STATUS: IT FIRES. It went in as precautionary and stayed unused for three cars, having been
+# written while chasing a PartMirrorL that appeared to span the whole truck -- which turned out
+# to be a stale Blender bound_box in the measuring script rather than bad geometry.
+#
+# Then on 2026-09-01 the Aventador's front bumper region rejected 2 oversized faces: a real
+# case, on a real model, of exactly the thing this guards against. Keep it.
 #
 # The guard scales with the region, so a bumper region spanning the full width still accepts
 # full-width faces; only a face too big for ITS OWN region is rejected.

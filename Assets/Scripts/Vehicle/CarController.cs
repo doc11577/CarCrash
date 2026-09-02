@@ -111,6 +111,29 @@ public class CarController : MonoBehaviour
     [Tooltip("How fast the wheels turn to the requested angle. Higher is twitchier.")]
     public float steerRate = 7f;
 
+    [Tooltip("Turn-in assist. Yaw comes only from tyre side force otherwise, which is honest and " +
+             "feels vague — the car has to build a slip angle before it bites, so turn-in lags " +
+             "the wheel and it ploughs on first.\n\n" +
+             "This drives the car toward the yaw rate its own geometry implies, so the steering " +
+             "angle still means what it says; it just gets there without waiting for the tyres. " +
+             "0 is the old pure-physics behaviour. 4 is responsive. Above ~8 it starts to feel " +
+             "like the car is on rails.")]
+    public float turnAssist = 4f;
+
+    [Tooltip("Largest yaw-rate error the assist will correct, in radians per second. This is " +
+             "what keeps a slide a slide: past this the car is genuinely sideways and has to be " +
+             "caught, rather than being quietly straightened out.")]
+    public float maxTurnAssist = 1.6f;
+
+    [Tooltip("Below this speed the assist is off, or it spins a parked car on the spot.")]
+    public float turnAssistMinSpeed = 2.5f;
+
+    [Tooltip("Understeer gradient. How much MORE steering a corner needs as speed rises — the " +
+             "difference between a car and a slot car. Raise it and the car pushes wide at speed; " +
+             "lower it and high-speed corners get unrealistically tight. 0 is pure Ackermann, " +
+             "which asks for a 9 m turn radius at 108 km/h and is not a car.")]
+    public float understeer = 0.006f;
+
     [Header("Grip")]
     [Tooltip("How hard the tyres resist sliding sideways. 1 is full grip, 0 is ice.")]
     [Range(0f, 1f)] public float frontGrip = 0.85f;
@@ -133,11 +156,31 @@ public class CarController : MonoBehaviour
     [Tooltip("Lets the player rotate the car in mid-air. Arcade convention, and it makes jumps landable.")]
     public float airControlTorque = 9000f;
 
+    [Tooltip("Angular damping while the wheels are down. This is the Rigidbody's own value and " +
+             "it is what stops the body wobbling on its springs — leave it alone.")]
+    public float groundedAngularDamping = 2f;
+
+    [Tooltip("Angular damping once airborne. The Rigidbody ships with 2, which bleeds off a " +
+             "spin in well under a second, so a car left the ramp rotating and simply stopped. " +
+             "It must be MUCH lower than that to roll at all — but not zero: 0.04 preserved a " +
+             "spin so faithfully that a knock on the lip had the car tumbling the whole flight. " +
+             "0.3 keeps the momentum and lets it bleed off, which reads as driven rather than " +
+             "thrown.")]
+    public float airAngularDamping = 0.30f;
+
+    [Tooltip("Degrees per second the car may spin in the air before air control stops adding " +
+             "to it. Input can still slow a spin past this; it just cannot wind it up forever. " +
+             "190 is about half a rotation a second — enough to roll, calm enough to watch.")]
+    public float maxAirSpin = 190f;
+
     [Header("Read-only")]
     [SerializeField] float debugSpeed;
 
     Rigidbody rb;
     float steerAngle;
+
+    /// <summary>Front-to-rear anchor distance, measured at Awake. Feeds the turn assist.</summary>
+    float wheelbase = 2.5f;
 
     /// <summary>
     /// Who is driving. Defaults to whatever <see cref="ICarDriver"/> is on this GameObject —
@@ -160,6 +203,70 @@ public class CarController : MonoBehaviour
         rb = GetComponent<Rigidbody>();
         Driver = GetComponent<ICarDriver>();
         rb.centerOfMass += centreOfMassOffset;
+
+        MeasureWheelbase();
+        CheckGrip();
+    }
+
+    /// <summary>
+    /// Shout if the car has been given so little grip force that it cannot corner.
+    /// </summary>
+    /// <remarks>
+    /// Written after `maxGripForce` was set to **26** instead of 26,000 on three prefabs, from a
+    /// table that wrote the numbers with comma separators. The symptom is total and baffling —
+    /// the car drives on ice — and NOTHING says why: no error, no warning, and the value looks
+    /// plausible sitting in the Inspector next to fields that really are single digits.
+    ///
+    /// Expressed in G because it makes an off-by-a-thousand obvious at a glance. Note this is the
+    /// CLAMP on the corrective impulse, not sustained cornering load — the tuned cars measure
+    /// 6-11 g by this yardstick and are not pulling anything like that in a steady corner. The
+    /// check only catches a value so small the tyres cannot act at all; the misconfigured E30
+    /// managed 0.009 g, against 8.8 when set correctly.
+    /// </remarks>
+    void CheckGrip()
+    {
+        if (rb == null || wheels == null || wheels.Length == 0) return;
+
+        float weight = rb.mass * Physics.gravity.magnitude;
+        if (weight <= 0f) return;
+
+        float lateralG = maxGripForce * wheels.Length / weight;
+        if (lateralG >= 0.3f) return;
+
+        Debug.LogError(
+            $"CarController on '{name}': maxGripForce is {maxGripForce:0.##}, which is only " +
+            $"{lateralG:0.###} g of lateral grip across {wheels.Length} wheels — the car will " +
+            "slide as though it is on ice and steering will do almost nothing.\n" +
+            $"For {rb.mass:0} kg, 1 g needs about {weight / wheels.Length:0} per wheel. " +
+            "The tuned cars in this project measure 6-11 g by this yardstick. Check for a " +
+            "missing thousand.", this);
+    }
+
+    /// <summary>
+    /// Front-to-rear anchor distance, for the turn assist's target yaw rate.
+    /// </summary>
+    /// <remarks>
+    /// Measured from the anchors rather than exposed as a field, because it is a FACT about the
+    /// car that is already in the scene — an Inspector value would be a second copy to get wrong,
+    /// and a wrong wheelbase makes the assist quietly aim at the wrong yaw rate on one car only.
+    /// The E30 is 2.57 m, the Aventador 2.75, the truck 3.35.
+    /// </remarks>
+    void MeasureWheelbase()
+    {
+        float front = 0f, rear = 0f;
+        int fronts = 0, rears = 0;
+
+        foreach (Wheel wheel in wheels)
+        {
+            if (wheel == null || wheel.anchor == null) continue;
+
+            float z = transform.InverseTransformPoint(wheel.anchor.position).z;
+            if (wheel.steers) { front += z; fronts++; }
+            else { rear += z; rears++; }
+        }
+
+        if (fronts > 0 && rears > 0)
+            wheelbase = Mathf.Abs(front / fronts - rear / rears);
     }
 
     void FixedUpdate()
@@ -190,14 +297,74 @@ public class CarController : MonoBehaviour
 
         Grounded = groundedCount > 0;
 
+        // Angular damping is switched, not constant. On the ground it is what keeps the body
+        // from wobbling on its springs; in the air the SAME value is what was eating every
+        // rotation the car had, so a jump ended in whatever attitude it started in. Switching
+        // it is the whole fix for "you cannot roll" and for momentum not carrying over.
+        //
+        // Keyed on Touching rather than Grounded, because the question here is "is this in free
+        // flight". A car sliding along on its roof has no wheel down but is very much in contact,
+        // and giving it air damping would leave it spinning freely against the scenery.
+        rb.angularDamping = Touching ? groundedAngularDamping : airAngularDamping;
+
         if (Grounded)
         {
             ApplyDownforce();
+            ApplyTurnAssist();
         }
         else
         {
             ApplyAirControl(throttle, steerWish);
         }
+    }
+
+    /// <summary>
+    /// Turn-in assist: drive the car toward the yaw rate its steering geometry implies.
+    /// </summary>
+    /// <remarks>
+    /// Yaw previously came ONLY from lateral tyre force, which is realistic and feels vague. The
+    /// car has to build a slip angle before the front tyres generate enough side force to rotate
+    /// it, and `maxGripForce` caps how fast that force can arrive — so turn-in lags the wheel by
+    /// a noticeable moment and the car ploughs on before it bites.
+    ///
+    /// The TARGET is the honest one: a car of this wheelbase at this speed and this steering
+    /// angle should be yawing at `v x tan(steer) / wheelbase`. That is textbook Ackermann, not an
+    /// invented number, so the car still corners like a car and the steering angle still means
+    /// something. What is arcade about it is that the yaw is helped along directly rather than
+    /// waiting for the tyres — the difference between "realistic" and "realistic but responsive".
+    ///
+    /// ForceMode.Acceleration, so it ignores the inertia tensor and behaves identically on a
+    /// 1,150 kg supercar and a 3,000 kg truck without per-car tuning.
+    ///
+    /// Three guards, all load-bearing:
+    ///   * GROUNDED only. In the air this would fight air control and let you steer on nothing.
+    ///   * Above a minimum speed, or it spins a parked car on the spot.
+    ///   * The correction is CLAMPED, so a big slip angle cannot be papered over — the car can
+    ///     still be made to slide and still has to be caught.
+    /// </remarks>
+    void ApplyTurnAssist()
+    {
+        if (turnAssist <= 0f || !Grounded) return;
+
+        float speed = ForwardSpeed;
+        if (Mathf.Abs(speed) < turnAssistMinSpeed) return;
+
+        // The steady-state bicycle model WITH an understeer gradient, not raw Ackermann.
+        //
+        // Raw `v x tan(d) / L` assumes the tyres never slip, and at speed that is wildly
+        // optimistic: it asks the E30 for a NINE METRE turn radius at 108 km/h. The assist would
+        // sit permanently saturated trying to deliver it and the car would corner like a slot car.
+        //
+        // Adding `understeer x v^2` to the wheelbase is the standard way to express that a real
+        // car needs more steering angle for the same corner as speed rises. It keeps the low
+        // speed behaviour honest and pulls the high speed target back to something a car can
+        // actually do — about 28 m at 108 km/h.
+        float speedTerm = wheelbase + understeer * speed * speed;
+        float desired = speed * Mathf.Tan(steerAngle * Mathf.Deg2Rad) / Mathf.Max(0.5f, speedTerm);
+        float current = Vector3.Dot(rb.angularVelocity, transform.up);
+
+        float correction = Mathf.Clamp(desired - current, -maxTurnAssist, maxTurnAssist);
+        rb.AddTorque(transform.up * (correction * turnAssist), ForceMode.Acceleration);
     }
 
     void UpdateSteering(float steerWish, float dt)
@@ -448,8 +615,57 @@ public class CarController : MonoBehaviour
     {
         if (airControlTorque <= 0f) return;
 
-        rb.AddTorque(transform.right * (-pitch * airControlTorque));
-        rb.AddTorque(transform.forward * (-roll * airControlTorque));
+        // Cap the spin the INPUT can build, not the spin itself. A crash or a ramp lip can
+        // legitimately send the car spinning faster than this and that rotation is kept; air
+        // control simply stops adding to an axis already over the limit. Clamping the
+        // rigidbody's angular velocity instead would throw away exactly the momentum this
+        // change exists to preserve.
+        float limit = maxAirSpin * Mathf.Deg2Rad;
+        Vector3 spin = rb.angularVelocity;
+
+        float pitchTorque = -pitch * airControlTorque;
+        float rollTorque = -roll * airControlTorque;
+
+        if (Vector3.Dot(spin, transform.right) * pitchTorque > 0f &&
+            Mathf.Abs(Vector3.Dot(spin, transform.right)) > limit)
+            pitchTorque = 0f;
+
+        if (Vector3.Dot(spin, transform.forward) * rollTorque > 0f &&
+            Mathf.Abs(Vector3.Dot(spin, transform.forward)) > limit)
+            rollTorque = 0f;
+
+        rb.AddTorque(transform.right * pitchTorque);
+        rb.AddTorque(transform.forward * rollTorque);
+    }
+
+    /// <summary>
+    /// True when the wheels are down OR the bodywork is against something.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Grounded"/> is a WHEEL test — it is what the suspension, drive and grip are
+    /// built on, and it is correct for all of them. It is the wrong question for "has the car
+    /// landed", because a car that comes down on its roof, its side, or across a boulder has
+    /// very much landed and has no wheel touching anything. Airtime scoring on `Grounded` alone
+    /// keeps counting through the entire barrel roll and only pays out if the car happens to
+    /// end up on its tyres.
+    ///
+    /// Driven from OnCollisionStay with a short expiry rather than a Stay/Exit pair, because
+    /// OnCollisionExit is easy to miss when a collider is disabled, destroyed or teleported —
+    /// and a stuck "still touching" flag would end airtime permanently.
+    /// </remarks>
+    public bool Touching => Grounded || Time.time - lastBodyTouch < bodyTouchMemory;
+
+    /// <summary>Seconds a body contact keeps counting after the last OnCollisionStay.</summary>
+    const float bodyTouchMemory = 0.15f;
+
+    float lastBodyTouch = -99f;
+
+    void OnCollisionStay(Collision collision)
+    {
+        // Same mask the wheels use, so "ground" means one thing across the whole component.
+        // Debris and boulders are on Default too, and landing across a boulder IS a landing.
+        if ((groundMask.value & (1 << collision.gameObject.layer)) == 0) return;
+        lastBodyTouch = Time.time;
     }
 
     /// <summary>

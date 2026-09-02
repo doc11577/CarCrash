@@ -143,17 +143,75 @@ public static class UiKit
         if (button == null) return;
 
         Color idle = accent ? Accent : Slab;
+
+        // Hover goes GOLD. An already-gold button lightens instead, or the accent button would
+        // have no hover state at all.
+        Color hover = accent ? Color.Lerp(Accent, Color.white, 0.28f) : Accent;
+
         ColorBlock colours = button.colors;
         colours.normalColor = idle;
-        colours.highlightedColor = Color.Lerp(idle, Color.white, 0.22f);
-        colours.pressedColor = Color.Lerp(idle, Color.black, 0.25f);
-        colours.selectedColor = colours.highlightedColor;
+        colours.highlightedColor = hover;
+        colours.pressedColor = Color.Lerp(hover, Color.black, 0.25f);
+
+        // SELECTED must match NORMAL, not highlighted.
+        //
+        // Unity leaves a clicked button SELECTED in the EventSystem, and a selected button keeps
+        // drawing its selectedColor whether or not the pointer is still on it. With selected set
+        // to the highlight, every button you had ever clicked stayed lit up after the mouse moved
+        // away, and the only way to clear it was to click something else. Matching normal means
+        // the highlight belongs to hover alone, which is what a highlight is.
+        colours.selectedColor = idle;
         colours.disabledColor = Color.Lerp(idle, Ground, 0.6f);
         colours.fadeDuration = 0.06f;
         button.colors = colours;
 
         TextMeshProUGUI text = button.GetComponentInChildren<TextMeshProUGUI>();
-        if (text != null) text.color = accent ? Ground : Ink;
+        if (text == null) return;
+
+        Color labelIdle = accent ? Ground : Ink;
+        text.color = labelIdle;
+
+        // The LABEL has to change with the background, and this is the reason a hover colour
+        // cannot just be set and forgotten. A ColorBlock tints the button's target graphic only,
+        // so near-white Ink text over a gold hover is a contrast ratio of about 1.3 — legible in
+        // a screenshot, unreadable in motion. Dark text on gold is about 5.5.
+        //
+        // One tiny component per button, added once and updated in place, because uGUI has no
+        // built-in way to drive anything but the target graphic from the ColorBlock.
+        LabelTint tint = button.GetComponent<LabelTint>();
+        if (tint == null) tint = button.gameObject.AddComponent<LabelTint>();
+        tint.Set(text, labelIdle, Ground);
+    }
+
+    /// <summary>
+    /// Swaps a button's label colour on hover, since a ColorBlock cannot.
+    /// </summary>
+    class LabelTint : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+    {
+        TextMeshProUGUI label;
+        Color idle;
+        Color hover;
+
+        public void Set(TextMeshProUGUI text, Color idleColour, Color hoverColour)
+        {
+            label = text;
+            idle = idleColour;
+            hover = hoverColour;
+
+            // Re-tinted while the pointer is already over it — the garage repaints buttons on
+            // every purchase — so settle on the idle colour rather than assuming not-hovered.
+            if (label != null) label.color = idle;
+        }
+
+        public void OnPointerEnter(PointerEventData eventData)
+        {
+            if (label != null) label.color = hover;
+        }
+
+        public void OnPointerExit(PointerEventData eventData)
+        {
+            if (label != null) label.color = idle;
+        }
     }
 
     /// <summary>
@@ -203,6 +261,31 @@ public static class UiKit
 
         /// <summary>Bottom edge of the last row, so what follows can be placed under it.</summary>
         public float BottomOf(int count) => top - slot * count;
+    }
+
+    /// <summary>
+    /// True while the player is typing into a text box anywhere.
+    /// </summary>
+    /// <remarks>
+    /// Every global hotkey has to check this. `R` restarts the run and `TAB` resumes, and the dev
+    /// tuner puts editable number boxes on the pause screen — so without it, typing a value and
+    /// happening to hit R throws away the run you were tuning. The keypress reaches
+    /// `Keyboard.current` whether or not the field accepts the character, so a numeric field
+    /// filtering the letter out is no protection at all.
+    ///
+    /// Asks the EventSystem what is selected rather than tracking fields, so it covers every box
+    /// in the game including any added later.
+    /// </remarks>
+    public static bool Typing()
+    {
+        EventSystem events = EventSystem.current;
+        if (events == null) return false;
+
+        GameObject selected = events.currentSelectedGameObject;
+        if (selected == null) return false;
+
+        TMP_InputField field = selected.GetComponent<TMP_InputField>();
+        return field != null && field.isFocused;
     }
 
     /// <summary>A single-line text box.</summary>

@@ -246,6 +246,67 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
+--- !u!1 &584578847
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 584578849}
+  - component: {fileID: 584578848}
+  m_Layer: 0
+  m_Name: Garage
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &584578848
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 584578847}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 018f855f4910ed547afa57b7c2f009b7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CarPodium
+  distance: 12
+  drop: 1
+  pitch: 10
+  podiumRadius: 3.1
+  podiumHeight: 0.55
+  podiumColour: {r: 0, g: 0, b: 0, a: 1}
+  spinSpeed: 18
+  settleTime: 0.45
+  backdropShader: {fileID: 0}
+  backdropBase: {r: 0.012, g: 0.011, b: 0.015, a: 1}
+  backdropAccent: {r: 1, g: 0.78, b: 0.15, a: 1}
+  backdropIdle: {r: 0.105, g: 0.11, b: 0.125, a: 1}
+  waveTime: 0.7
+  rippleTime: 0.85
+  rippleReach: 1.6
+  lastLift: 0
+  lastShown: (none)
+--- !u!4 &584578849
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 584578847}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -141.81454, y: 0, z: -527.07434}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &618861120
 GameObject:
   m_ObjectHideFlags: 0
@@ -285,6 +346,14 @@ MonoBehaviour:
     displayName: Everest Descent
     sceneName: Everest
     blurb: "2,000 m \xB7 1,400 m drop \xB7 35\xB0 average"
+  - id: bullseye
+    displayName: Bullseye
+    sceneName: Bullseye
+    blurb: "620 m \xB7 230 m drop \xB7 land on the gold"
+  - id: TheDam
+    displayName: The Dam
+    sceneName: TheDam
+    blurb: "Circut \xB7 Solo "
   roster: {fileID: 11400000, guid: d2c20dc4353d8a4429439e0ac46751d1, type: 2}
   minimumLoadTime: 0.4
 --- !u!4 &618861122
@@ -446,3 +515,4 @@ SceneRoots:
   - {fileID: 961739753}
   - {fileID: 203844589}
   - {fileID: 618861122}
+  - {fileID: 584578849}

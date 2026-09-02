@@ -71,6 +71,15 @@ public class TrafficSpawner : MonoBehaviour
         new Color(0.24f, 0.25f, 0.27f),   // graphite
     };
 
+    [Header("Driving")]
+    [Tooltip("How much the AI steers around obstacles ON THIS MAP. 1 is normal. 0 switches it " +
+             "off entirely, which is what EVEREST wants: the whole face is jagged rock, so the " +
+             "hazard sweep sees an obstacle everywhere and the cars pick their way down a " +
+             "mountain that is supposed to be bombed straight off. Quarry needs it ON — that " +
+             "course has real boulders on an otherwise clear floor, which is the case the sweep " +
+             "was built for.")]
+    [Range(0f, 1f)] public float obstacleAvoidance = 1f;
+
     [Header("Scoring")]
     [Tooltip("Whether damage to TRAFFIC counts toward the run score. Off by default because " +
              "the design says the score is damage to YOUR car, and with this on a traffic car " +
@@ -146,6 +155,12 @@ public class TrafficSpawner : MonoBehaviour
         CarPaint paint = car.GetComponent<CarPaint>();
         if (paint != null && palette != null && palette.Length > 0)
             paint.Apply(palette[index % palette.Length]);
+
+        // Obstacle avoidance is a per-MAP decision, so it is set here rather than on the prefab.
+        // The same traffic prefab is used on every course, and Everest wants it off while Quarry
+        // very much wants it on.
+        TrafficDriver driver = car.GetComponent<TrafficDriver>();
+        if (driver != null) driver.hazardWeight *= obstacleAvoidance;
 
         if (!scoreTrafficDamage) return;
 

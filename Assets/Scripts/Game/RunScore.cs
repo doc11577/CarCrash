@@ -40,6 +40,12 @@ public class RunScore : MonoBehaviour
              "totals around 200 gears at the end of a long run, which this lands near.")]
     public float gearsPerDamage = 0.02f;
 
+    [Tooltip("Gears per point of damage you do to SOMEONE ELSE'S car. Higher than your own, " +
+             "because wrecking traffic is a deliberate act and taking damage yourself is mostly " +
+             "what happens anyway. Only paid when YOU caused it — traffic wrecking itself on a " +
+             "wall pays nothing, which is what makes this safe to switch on at all.")]
+    public float gearsPerPvpDamage = 0.06f;
+
     [Tooltip("Gears per point of a lost part's STARTING health. Derived from health rather " +
              "than a per-part field so there is nothing extra to wire, and health is already " +
              "roughly proportional to how hard the part was to remove: a 160-health bumper " +
@@ -217,16 +223,149 @@ public class RunScore : MonoBehaviour
     {
         if (Multiplier > 1f && Time.time >= comboExpiresAt) Multiplier = 1f;
 
+        TrackAirtime(Time.deltaTime);
+
         scoreReadout = Score;
         multiplierReadout = Multiplier;
     }
 
-    void OnDamaged(float damage, Vector3 point, bool sustained)
+    /// <summary>
+    /// Add gears from outside, with a popup. For scorers that belong to ONE map.
+    /// </summary>
+    /// <remarks>
+    /// Exists so a map-specific rule — the dartboard, and whatever the next map wants — does not
+    /// have to be built into `RunScore` itself. Damage, parts, airtime and feats are the rules
+    /// that apply to every run and they live here; a target that only exists on Bullseye does
+    /// not, and putting it here would mean every map paying to check a board it does not have.
+    ///
+    /// The combo multiplier is deliberately NOT applied. The caller decides what the award is
+    /// worth, because a landing on the bull is worth what it is worth regardless of what the
+    /// player happened to hit on the way down.
+    /// </remarks>
+    public void Award(int gears, string text, Vector3 at, Color colour, bool major)
     {
+        if (gears > 0) Score += gears;
+        if (!string.IsNullOrEmpty(text)) Scored?.Invoke(text, at, colour, major);
+    }
+
+    // ---- airtime ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// Airborne time earns gears, but only once the car LANDS.
+    /// </summary>
+    /// <remarks>
+    /// Paying on landing rather than continuously is the whole design. A jump that ends in the
+    /// bottom of a ravine, or with the car falling out of the world, should pay nothing —
+    /// otherwise the best way to farm gears is to drive off the map and wait. It also gives the
+    /// counter somewhere to go: it climbs while the outcome is still in doubt and is banked at
+    /// the moment the risk resolves, which is where the tension is.
+    ///
+    /// <see cref="minAirTime"/> is what separates a jump from a bump. `CarController.Grounded`
+    /// goes false whenever all four SphereCasts miss, which happens over every crest and kerb on
+    /// the course, so without a floor the counter would flicker constantly during normal driving.
+    ///
+    /// <see cref="maxAirTime"/> exists because "not grounded" is also true of a car wedged on a
+    /// rock, upside down on a ledge, or falling out of the world. Without a cap those pay out
+    /// unboundedly.
+    /// </remarks>
+    [Header("Airtime")]
+    [Tooltip("Seconds off the ground before it counts as a jump at all, and before the counter " +
+             "appears. Below this it is a bump over a crest — the wheels leave the ground " +
+             "constantly on these courses, so a floor is what stops the counter flickering the " +
+             "whole way down. Raised from 0.45 because at that value it still flickered on " +
+             "rough ground; 0.8 is about the shortest thing that reads as a jump.")]
+    public float minAirTime = 0.8f;
+
+    [Tooltip("Gears earned per second airborne, before the combo multiplier.")]
+    public float gearsPerAirSecond = 26f;
+
+    [Tooltip("Gears at which the popup turns gold and grows. Roughly a 2.5 second jump.")]
+    public int airGoldAt = 65;
+
+    [Tooltip("Longest jump that can pay. A cap is needed because 'not grounded' is also true of " +
+             "a car stuck on its roof or falling out of the world.")]
+    public float maxAirTime = 9f;
+
+    /// <summary>True while the car is off the ground, before the minimum is reached.</summary>
+    public bool Airborne { get; private set; }
+
+    /// <summary>Seconds off the ground so far this jump.</summary>
+    public float AirTime { get; private set; }
+
+    /// <summary>Gears this jump is currently worth. What the live popup shows.</summary>
+    public int AirGears => Mathf.FloorToInt(AirTime * gearsPerAirSecond * Multiplier);
+
+    /// <summary>Past the gold threshold — the HUD draws it larger and in the accent colour.</summary>
+    public bool AirIsBig => AirGears >= airGoldAt;
+
+    /// <summary>Whether the HUD should be drawing the airtime counter at all.</summary>
+    public bool AirShowing => Airborne && AirTime >= minAirTime;
+
+    void TrackAirtime(float dt)
+    {
+        CarController car = PlayerCar.Current != null ? PlayerCar.Current.Controller : null;
+
+        // No car — mid-respawn, or the run is ending. Drop the jump rather than banking it,
+        // since there is nothing to have landed.
+        if (car == null)
+        {
+            Airborne = false;
+            AirTime = 0f;
+            return;
+        }
+
+        // Touching, not Grounded. Grounded is a WHEEL test, so a car that comes down on its
+        // roof or its side is still "not grounded" and the counter would run through the whole
+        // crash and only pay if it happened to settle on its tyres. Any part of the car hitting
+        // anything ends the jump, which is what landing means.
+        if (!car.Touching)
+        {
+            Airborne = true;
+            AirTime = Mathf.Min(AirTime + dt, maxAirTime);
+            return;
+        }
+
+        if (Airborne && AirTime >= minAirTime)
+        {
+            int worth = AirGears;
+            if (worth > 0)
+            {
+                Score += worth;
+
+                // Same colour and size rule the live counter used, so the popup that confirms
+                // the payout looks like the thing the player was watching climb.
+                Scored?.Invoke("AIRTIME  +" + worth, car.transform.position,
+                               AirIsBig ? airColour : Color.white, AirIsBig);
+            }
+        }
+
+        Airborne = false;
+        AirTime = 0f;
+    }
+
+    [Tooltip("Colour of the airtime popup once it passes the gold threshold.")]
+    public Color airColour = new Color(1f, 0.78f, 0.15f);
+
+    [Tooltip("Colour of the popup for damage done to another car.")]
+    public Color pvpColour = new Color(1f, 0.42f, 0.30f);
+
+    void OnDamaged(CarDamage source, float damage, Vector3 point, bool sustained, bool byPlayer)
+    {
+        // WHOSE car was hurt, and who did it.
+        //
+        // Damage to your own car always counts. Damage to anyone ELSE'S counts only when you
+        // caused it — a traffic car wrecking itself on a wall pays nothing, which is precisely
+        // the objection that kept TrafficSpawner.scoreTrafficDamage switched off. With the
+        // source and the byPlayer flag on the event, it can finally be turned on.
+        bool mine = source == playerCar;
+        if (!mine && !byPlayer) return;
+
+        float rate = mine ? gearsPerDamage : gearsPerPvpDamage;
+
         // Scored at the multiplier in force WHEN THE HIT LANDED, and the popup shows this same
         // number. Working it out again after the combo has climbed would print a figure that
         // was never added to the score.
-        float gained = damage * gearsPerDamage * Multiplier;
+        float gained = damage * rate * Multiplier;
         Score += gained;
 
         impactsCounted++;
@@ -243,7 +382,13 @@ public class RunScore : MonoBehaviour
         comboExpiresAt = Time.time + comboWindow;
 
         int worth = Mathf.RoundToInt(gained);
-        if (worth >= minPopupGears) Scored?.Invoke("+" + worth, point, Color.white, false);
+        if (worth >= minPopupGears)
+        {
+            // Wrecking someone else reads differently from being wrecked, so it is worth
+            // saying which happened rather than printing the same white "+12" for both.
+            Scored?.Invoke(mine ? "+" + worth : "WRECKER  +" + worth, point,
+                           mine ? Color.white : pvpColour, !mine);
+        }
 
         if (Time.time < comboRearmAt) return;
         comboRearmAt = Time.time + comboRearmInterval;

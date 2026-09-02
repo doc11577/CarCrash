@@ -109,6 +109,7 @@ GameObject:
   - component: {fileID: 8112598414039281056}
   - component: {fileID: 5708871499934583507}
   - component: {fileID: 6415979989412138862}
+  - component: {fileID: -3949678287418939851}
   m_Layer: 6
   m_Name: CarTruck
   m_TagString: Untagged
@@ -251,13 +252,20 @@ MonoBehaviour:
   maxSteerAngle: 26
   highSpeedSteerAngle: 13
   steerRate: 7
+  turnAssist: 4
+  maxTurnAssist: 1.6
+  turnAssistMinSpeed: 2.5
+  understeer: 0.006
   frontGrip: 0.72
   rearGrip: 0.62
   handbrakeGrip: 0.18
-  maxGripForce: 35000
+  maxGripForce: 48000
   centreOfMassOffset: {x: 0, y: -0.8, z: 0}
   downforce: 0.2
   airControlTorque: 22500
+  groundedAngularDamping: 2
+  airAngularDamping: 0.3
+  maxAirSpin: 190
   debugSpeed: 0
 --- !u!114 &473603020280776006
 MonoBehaviour:
@@ -277,7 +285,7 @@ MonoBehaviour:
     anchor: {fileID: 0}
     visual: {fileID: 7773963871633260075}
     debrisPrefab: {fileID: 913890005381965296, guid: 5b2b999f2784b7741866c14c875f587f, type: 3}
-    health: 55
+    health: 130
     wheelIndex: -1
     group: 
     detached: 0
@@ -291,7 +299,7 @@ MonoBehaviour:
     anchor: {fileID: 0}
     visual: {fileID: 2199194743821188698}
     debrisPrefab: {fileID: 0}
-    health: 55
+    health: 130
     wheelIndex: -1
     group: 
     detached: 0
@@ -305,7 +313,7 @@ MonoBehaviour:
     anchor: {fileID: 0}
     visual: {fileID: 3348269333353170472}
     debrisPrefab: {fileID: 2877463211680842686, guid: ce75b73a5c23ba8459b514f1ba8f6a7a, type: 3}
-    health: 80
+    health: 160
     wheelIndex: -1
     group: 
     detached: 0
@@ -319,7 +327,7 @@ MonoBehaviour:
     anchor: {fileID: 0}
     visual: {fileID: 2199194743821188698}
     debrisPrefab: {fileID: 2877463211680842686, guid: ce75b73a5c23ba8459b514f1ba8f6a7a, type: 3}
-    health: 70
+    health: 140
     wheelIndex: -1
     group: 
     detached: 0
@@ -333,7 +341,7 @@ MonoBehaviour:
     anchor: {fileID: 0}
     visual: {fileID: 4327565001061034627}
     debrisPrefab: {fileID: 2507547178003535469, guid: f53a05f757af5064fbcb5ad97312af75, type: 3}
-    health: 75
+    health: 140
     wheelIndex: -1
     group: 
     detached: 0
@@ -347,7 +355,7 @@ MonoBehaviour:
     anchor: {fileID: 0}
     visual: {fileID: 5252002110302960838}
     debrisPrefab: {fileID: 2507547178003535469, guid: f53a05f757af5064fbcb5ad97312af75, type: 3}
-    health: 75
+    health: 140
     wheelIndex: -1
     group: 
     detached: 0
@@ -361,7 +369,7 @@ MonoBehaviour:
     anchor: {fileID: 4760219951508521539}
     visual: {fileID: 5362765948025047962}
     debrisPrefab: {fileID: 7822745094170934348, guid: 9151b774b6314614b8c3675af3941346, type: 3}
-    health: 110
+    health: 150
     wheelIndex: 0
     group: 
     detached: 0
@@ -375,7 +383,7 @@ MonoBehaviour:
     anchor: {fileID: 1083755040245987407}
     visual: {fileID: 1711674621931137965}
     debrisPrefab: {fileID: 7822745094170934348, guid: 9151b774b6314614b8c3675af3941346, type: 3}
-    health: 110
+    health: 150
     wheelIndex: 1
     group: 
     detached: 0
@@ -389,7 +397,7 @@ MonoBehaviour:
     anchor: {fileID: 3334841702409293211}
     visual: {fileID: 3060177969525638151}
     debrisPrefab: {fileID: 7822745094170934348, guid: 9151b774b6314614b8c3675af3941346, type: 3}
-    health: 110
+    health: 150
     wheelIndex: 2
     group: 
     detached: 0
@@ -403,7 +411,7 @@ MonoBehaviour:
     anchor: {fileID: 3604183895059963622}
     visual: {fileID: 6144545158598247201}
     debrisPrefab: {fileID: 7822745094170934348, guid: 9151b774b6314614b8c3675af3941346, type: 3}
-    health: 110
+    health: 150
     wheelIndex: 3
     group: 
     detached: 0
@@ -417,7 +425,7 @@ MonoBehaviour:
     anchor: {fileID: 0}
     visual: {fileID: 2372585140089542653}
     debrisPrefab: {fileID: 0}
-    health: 28
+    health: 60
     wheelIndex: -1
     group: mirror
     detached: 0
@@ -431,7 +439,7 @@ MonoBehaviour:
     anchor: {fileID: 0}
     visual: {fileID: 3723487374522915020}
     debrisPrefab: {fileID: 0}
-    health: 28
+    health: 60
     wheelIndex: -1
     group: mirror
     detached: 0
@@ -442,7 +450,8 @@ MonoBehaviour:
     homeLayer: 0
   minimumImpulse: 1500
   damagePerImpulse: 0.045
-  maxDamagePerImpact: 110
+  maxDamagePerImpact: 60
+  carVsCarDamage: 3
   partReach: 2.5
   ejectSpeed: 4.5
   ejectSpin: 11
@@ -533,13 +542,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CarDeformation
   panels: []
-  radius: 0.55
+  radius: 1
   strengthPerDamage: 0.0022
-  maxDisplacement: 1
+  maxDisplacement: 1.8
   crumple: 0.5
-  crush: 0.75
+  crush: 0.85
   rimBulge: 0
-  crumpleScale: 0.22
+  crumpleScale: 0.46
   rimStart: 0.6
   shellRadiusScale: 1.7
   shellDepthScale: 1.25
@@ -578,6 +587,21 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 49640ee3ffa9a014d8db7f4e6cea5ee1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerCar
+--- !u!114 &-3949678287418939851
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521731838676468038}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fd0f46681ff5e854cafcde1c13fdfe72, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CarCamera
+  extraDistance: 1.2
+  extraHeight: 1.5
+  extraLookHeight: 1.5
 --- !u!1 &574285659215530415
 GameObject:
   m_ObjectHideFlags: 0

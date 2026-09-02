@@ -85,6 +85,28 @@ public class ChaseCamera : MonoBehaviour
     [Tooltip("Below this speed (m/s) the camera uses the car's facing instead of its velocity.")]
     public float velocityYawThreshold = 2.5f;
 
+    [Header("Airborne")]
+    [Tooltip("Extra metres the camera pulls back once the car leaves the ground. Pulling back is " +
+             "what turns a spin into something you can read — the car stays whole in frame " +
+             "instead of filling it and thrashing.")]
+    public float airDistance = 5f;
+
+    [Tooltip("Extra metres of height while airborne, so a long jump shows the ground you are " +
+             "going to land on rather than the sky.")]
+    public float airHeight = 2.2f;
+
+    [Tooltip("Extra field of view while airborne. Sells the height and keeps the horizon in shot.")]
+    public float airFov = 7f;
+
+    [Tooltip("How much of the normal yaw tracking survives in the air. 0.12 means the camera " +
+             "barely turns at all while flying, which is the point: it should hold a steady " +
+             "view of a rotating car, not rotate with it.")]
+    [Range(0f, 1f)] public float airYawFactor = 0.12f;
+
+    [Tooltip("How fast the airborne framing eases in and out. Low, so a bump over a crest does " +
+             "not lurch the camera — the blend cannot complete in the time the wheels are off.")]
+    public float airBlendSharpness = 1.8f;
+
     [Header("Collision")]
     [Tooltip("Pull the camera in when scenery would block the view.")]
     public bool avoidGeometry = true;
@@ -131,6 +153,23 @@ public class ChaseCamera : MonoBehaviour
     Vector3 aimPoint;
     bool initialised;
 
+    // Per-vehicle framing offsets, refreshed whenever the target changes. Zero for a car with
+    // no CarCamera component, which is every car the shared tuning already suits.
+    float extraDistance;
+    float extraHeight;
+    float extraLookHeight;
+
+    // 0 on the ground, 1 in the air. Eased, so the framing change is a glide rather than a cut.
+    float airBlend;
+    CarController carController;
+
+    /// <summary>
+    /// Where on the car the camera aims, adjusted for this vehicle. Used by BOTH the driving
+    /// aim point and the look-around blend — missing one of them is how a truck ends up framed
+    /// correctly while still being aimed at the middle of its box body.
+    /// </summary>
+    float RigLookHeight => lookHeight + extraLookHeight;
+
     void Awake()
     {
         cam = GetComponent<Camera>();
@@ -138,6 +177,11 @@ public class ChaseCamera : MonoBehaviour
 
         if (targetBody == null && target != null)
             targetBody = target.GetComponentInParent<Rigidbody>();
+
+        if (carController == null && target != null)
+            carController = target.GetComponentInParent<CarController>();
+
+        CarCamera.Read(target, out extraDistance, out extraHeight, out extraLookHeight);
     }
 
     void OnEnable()
@@ -154,6 +198,12 @@ public class ChaseCamera : MonoBehaviour
         {
             target = PlayerCar.Current.transform;
             targetBody = PlayerCar.Current.GetComponent<Rigidbody>();
+            carController = PlayerCar.Current.Controller;
+
+            // Framing travels with the car, so a garage that spawns a truck instead of a saloon
+            // gets the truck's camera without anything being wired in the scene.
+            CarCamera.Read(target, out extraDistance, out extraHeight, out extraLookHeight);
+
             initialised = false;
         }
 
@@ -166,6 +216,11 @@ public class ChaseCamera : MonoBehaviour
         Vector3 flatVelocity = Vector3.ProjectOnPlane(velocity, Vector3.up);
         float speed = flatVelocity.magnitude;
         float speed01 = Mathf.Clamp01(speed / Mathf.Max(0.01f, speedForFullEffect));
+
+        // Touching, not Grounded: a car sliding on its roof has landed, and should get the
+        // grounded framing back rather than staying zoomed out while it grinds along.
+        bool airborne = carController != null && !carController.Touching;
+        airBlend = Mathf.Lerp(airBlend, airborne ? 1f : 0f, Damp(airBlendSharpness, dt));
 
         UpdateYaw(flatVelocity, speed, dt);
         UpdateGroundNormal(dt);
@@ -183,13 +238,18 @@ public class ChaseCamera : MonoBehaviour
         if (lookYaw != 0f || lookPitch != 0f)
             basis *= Quaternion.Euler(lookPitch, lookYaw, 0f);
 
+        float rigHeight = height + extraHeight + airHeight * airBlend;
+        float rigDistance = distance + extraDistance + airDistance * airBlend;
+
         Vector3 desiredPosition = target.position
             + basis * new Vector3(
                 0f,
-                height + speedHeight * speed01,
-                -(distance + speedDistance * speed01));
+                rigHeight + speedHeight * speed01,
+                -(rigDistance + speedDistance * speed01));
 
-        Vector3 pivot = target.position + rigUp * (height * 0.5f);
+        // The pivot follows the rig height, so geometry avoidance pulls the camera in toward a
+        // point that is still inside the vehicle rather than toward its wheels on a tall one.
+        Vector3 pivot = target.position + rigUp * (rigHeight * 0.5f);
         if (avoidGeometry)
             desiredPosition = PullInFromGeometry(pivot, desiredPosition);
 
@@ -199,7 +259,7 @@ public class ChaseCamera : MonoBehaviour
         // the downhill fix and it is right when driving, but it fights you when the whole
         // point is to inspect the car you just wrecked.
         if (lookBlend > 0f)
-            desiredAim = Vector3.Lerp(desiredAim, target.position + rigUp * lookHeight, lookBlend);
+            desiredAim = Vector3.Lerp(desiredAim, target.position + rigUp * RigLookHeight, lookBlend);
 
         if (!initialised)
         {
@@ -217,7 +277,8 @@ public class ChaseCamera : MonoBehaviour
         if (toAim.sqrMagnitude > 0.0001f)
             transform.rotation = Quaternion.LookRotation(toAim, rigUp);
 
-        fov = Mathf.Lerp(fov, Mathf.Lerp(baseFov, fastFov, speed01), Damp(4f, dt));
+        fov = Mathf.Lerp(fov, Mathf.Lerp(baseFov, fastFov, speed01) + airFov * airBlend,
+                         Damp(4f, dt));
         cam.fieldOfView = fov;
     }
 
@@ -236,6 +297,17 @@ public class ChaseCamera : MonoBehaviour
             // Reversing should not spin the camera around to look at the boot.
             desired = Vector3.Dot(flatVelocity, facing) < 0f ? facing : flatVelocity;
         }
+        else if (airBlend > 0.5f)
+        {
+            // AIRBORNE AND BARELY MOVING SIDEWAYS -- at the apex of a jump, or straight down.
+            //
+            // Never fall back to the car's FACING here. That is the fallback for a parked car,
+            // and it is exactly wrong in the air: a barrel-rolling car's facing sweeps a full
+            // circle every second, so the camera would chase it round and the whole world spins.
+            // Holding the yaw is what makes a roll read as the CAR rotating rather than the
+            // camera. This is the fix for "the camera goes crazy when spinning".
+            return;
+        }
         else
         {
             desired = facing;
@@ -246,7 +318,13 @@ public class ChaseCamera : MonoBehaviour
         float desiredYaw = Mathf.Atan2(desired.x, desired.z) * Mathf.Rad2Deg;
 
         if (!initialised) yaw = desiredYaw;
-        else yaw = Mathf.LerpAngle(yaw, desiredYaw, Damp(yawSharpness, dt));
+        else
+        {
+            // Yaw tracking is slowed right down in the air, so even a genuine change of
+            // direction mid-flight is followed gently rather than snapped to.
+            float sharpness = yawSharpness * Mathf.Lerp(1f, airYawFactor, airBlend);
+            yaw = Mathf.LerpAngle(yaw, desiredYaw, Damp(sharpness, dt));
+        }
     }
 
     /// <summary>
@@ -324,16 +402,16 @@ public class ChaseCamera : MonoBehaviour
     /// </summary>
     Vector3 ResolveAimPoint(Vector3 rigForward, Vector3 rigUp, float speed01)
     {
-        Vector3 carPoint = target.position + rigUp * lookHeight;
+        Vector3 carPoint = target.position + rigUp * RigLookHeight;
 
         Vector3 ahead = target.position + rigForward * (aimAhead * Mathf.Lerp(0.6f, 1f, speed01));
         Vector3 probe = ahead + Vector3.up * 6f;
 
         Vector3 aheadPoint;
         if (Physics.Raycast(probe, Vector3.down, out RaycastHit hit, 30f, groundMask, QueryTriggerInteraction.Ignore))
-            aheadPoint = hit.point + Vector3.up * lookHeight;
+            aheadPoint = hit.point + Vector3.up * RigLookHeight;
         else
-            aheadPoint = ahead + rigUp * lookHeight;   // over a jump or a cliff edge
+            aheadPoint = ahead + rigUp * RigLookHeight;   // over a jump or a cliff edge
 
         Vector3 blended = Vector3.Lerp(carPoint, aheadPoint, aimAheadWeight);
 

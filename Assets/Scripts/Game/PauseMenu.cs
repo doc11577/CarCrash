@@ -96,21 +96,17 @@ public class PauseMenu : MonoBehaviour
     /// back, so a change takes effect the moment you resume. They are NOT persisted — a reload
     /// restores the prefab, which is what makes it safe to experiment.
     /// </remarks>
-    static readonly (string label, System.Func<CarController, float> get,
-                     System.Action<CarController, float> set, float step)[] Tunables =
-    {
-        ("Top speed",    c => c.topSpeed,          (c, v) => c.topSpeed = v,          2f),
-        ("Engine power", c => c.enginePower,       (c, v) => c.enginePower = v,       200f),
-        ("Grip front",   c => c.frontGrip,         (c, v) => c.frontGrip = Mathf.Clamp01(v),  0.05f),
-        ("Grip rear",    c => c.rearGrip,          (c, v) => c.rearGrip = Mathf.Clamp01(v),   0.05f),
-        ("Downforce",    c => c.downforce,         (c, v) => c.downforce = Mathf.Max(0f, v),  0.1f),
-        ("Spring",       c => c.springStrength,    (c, v) => c.springStrength = v,    500f),
-        ("Damper",       c => c.damperStrength,    (c, v) => c.damperStrength = v,    200f),
-        ("Anti-roll",    c => c.antiRollStrength,  (c, v) => c.antiRollStrength = v,  500f),
-        ("Steer angle",  c => c.maxSteerAngle,     (c, v) => c.maxSteerAngle = v,     2f),
-    };
+    // The table lives in CarTuning, because PlayerCarSpawner needs it too — it has to put
+    // saved values back on a freshly spawned car. Two copies would drift silently.
+    static CarTuning.Tunable[] Tunables => CarTuning.Tunables;
 
-    readonly List<TextMeshProUGUI> tunerValues = new List<TextMeshProUGUI>();
+    /// <summary>
+    /// The editable value box for each tunable. See <see cref="BuildTuner"/>.
+    /// </summary>
+    readonly List<TMP_InputField> tunerFields = new List<TMP_InputField>();
+
+    /// <summary>True while RefreshTuner is writing, so its writes are not read back as edits.</summary>
+    bool refreshingTuner;
 
     void BuildTuner()
     {
@@ -118,7 +114,7 @@ public class PauseMenu : MonoBehaviour
                    TextAlignmentOptions.Center, new Vector2(560f, 300f), new Vector2(560f, 34f))
              .fontStyle = FontStyles.Bold;
 
-        tunerValues.Clear();
+        tunerFields.Clear();
 
         for (int i = 0; i < Tunables.Length; i++)
         {
@@ -126,22 +122,62 @@ public class PauseMenu : MonoBehaviour
             float y = 240f - i * 56f;
 
             UiKit.Text(panel.transform, Tunables[i].label, 24f, UiKit.Ink,
-                       TextAlignmentOptions.Right, new Vector2(400f, y), new Vector2(240f, 34f));
+                       TextAlignmentOptions.Right, new Vector2(370f, y), new Vector2(240f, 34f));
 
-            UiKit.Button(panel.transform, "-", new Vector2(560f, y), new Vector2(52f, 44f),
-                         () => Nudge(index, -1f));
+            UiKit.Button(panel.transform, "-", new Vector2(530f, y), new Vector2(46f, 44f),
+                         () => Nudge(index, -1f), fontSize: 26f);
 
-            tunerValues.Add(UiKit.Text(panel.transform, "", 24f, UiKit.Accent,
-                                       TextAlignmentOptions.Center, new Vector2(650f, y),
-                                       new Vector2(130f, 34f)));
+            // A TYPED field, not a label. Nudging a spring rate from 9000 to 22500 at 500 a
+            // click is 27 clicks, and the numbers this project actually needs — a truck's 2.5x
+            // spring scaling, an exact downforce — are worked out on paper and then entered.
+            // The +/- buttons stay for feeling out a value by ear, which is the other half of
+            // what this screen is for.
+            TMP_InputField field = UiKit.Field(panel.transform, "", new Vector2(650f, y),
+                                               new Vector2(150f, 44f), 24f);
+            field.contentType = TMP_InputField.ContentType.DecimalNumber;
 
-            UiKit.Button(panel.transform, "+", new Vector2(740f, y), new Vector2(52f, 44f),
-                         () => Nudge(index, 1f));
+            // Committed on Enter or on clicking away, NOT per keystroke. onValueChanged would
+            // apply "9" and then "90" while "9000" is still being typed, which briefly gives the
+            // car a spring rate of 9 — and at timeScale 0 that is invisible until you resume
+            // into a car sitting on its bump stops.
+            field.onEndEdit.AddListener(text => Commit(index, text));
+
+            tunerFields.Add(field);
+
+            UiKit.Button(panel.transform, "+", new Vector2(770f, y), new Vector2(46f, 44f),
+                         () => Nudge(index, 1f), fontSize: 26f);
         }
 
-        UiKit.Text(panel.transform, "Not saved. Restarting restores the prefab.",
+        UiKit.Text(panel.transform, "Type a value and press Enter, or nudge with -/+.",
                    20f, UiKit.Muted, TextAlignmentOptions.Center,
-                   new Vector2(560f, -260f), new Vector2(560f, 30f));
+                   new Vector2(560f, -240f), new Vector2(560f, 30f));
+
+        UiKit.Text(panel.transform, "Saved per car. RESET PROGRESS clears it.",
+                   20f, UiKit.Muted, TextAlignmentOptions.Center,
+                   new Vector2(560f, -268f), new Vector2(560f, 30f));
+    }
+
+    /// <summary>Apply a typed value, or put the real one back if it was not a number.</summary>
+    void Commit(int index, string text)
+    {
+        if (refreshingTuner) return;
+
+        CarController target = PlayerCar.Current != null ? PlayerCar.Current.Controller : null;
+        if (target == null) return;
+
+        // InvariantCulture: TMP's DecimalNumber content type accepts whatever separator the
+        // keyboard produces, and a machine set to a comma decimal would otherwise parse "0,85"
+        // as 85 — a grip value of 85 rather than 0.85.
+        if (float.TryParse(text, System.Globalization.NumberStyles.Float,
+                           System.Globalization.CultureInfo.InvariantCulture, out float value))
+        {
+            Tunables[index].set(target, value);
+            Persist(target);
+        }
+
+        // Always refresh, so a rejected entry snaps back to the truth rather than sitting there
+        // looking as though it took, and so a clamped one shows what it was clamped to.
+        RefreshTuner();
     }
 
     void Nudge(int index, float direction)
@@ -151,18 +187,39 @@ public class PauseMenu : MonoBehaviour
 
         var t = Tunables[index];
         t.set(target, t.get(target) + t.step * direction);
+        Persist(target);
         RefreshTuner();
+    }
+
+    /// <summary>Save the whole set, so a restart keeps whatever was being tried.</summary>
+    void Persist(CarController target)
+    {
+        CarTuning.Save(target, GameSelection.CarId);
     }
 
     void RefreshTuner()
     {
-        if (tunerValues.Count == 0) return;
+        if (tunerFields.Count == 0) return;
 
         CarController target = PlayerCar.Current != null ? PlayerCar.Current.Controller : null;
         if (target == null) return;
 
-        for (int i = 0; i < tunerValues.Count && i < Tunables.Length; i++)
-            tunerValues[i].text = Tunables[i].get(target).ToString("0.##");
+        // Guarded, because writing .text fires onEndEdit on a focused field — which would call
+        // Commit, which calls RefreshTuner, which writes .text again.
+        refreshingTuner = true;
+
+        for (int i = 0; i < tunerFields.Count && i < Tunables.Length; i++)
+        {
+            // Leave the box alone while it is being typed into, or the value snaps back
+            // mid-entry the moment anything else refreshes.
+            if (tunerFields[i].isFocused) continue;
+
+            tunerFields[i].SetTextWithoutNotify(
+                Tunables[i].get(target).ToString("0.##",
+                    System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        refreshingTuner = false;
     }
 
     void OnEnable()
@@ -182,6 +239,10 @@ public class PauseMenu : MonoBehaviour
 
         Keyboard keyboard = Keyboard.current;
         if (keyboard == null) return;
+
+        // TAB moves between fields while typing in the tuner; resuming on it would eject you
+        // from the menu mid-edit.
+        if (UiKit.Typing()) return;
 
         if (keyboard[pauseKey].wasPressedThisFrame)
         {

@@ -372,13 +372,20 @@ MonoBehaviour:
   maxSteerAngle: 28
   highSpeedSteerAngle: 13
   steerRate: 7
+  turnAssist: 4
+  maxTurnAssist: 1.6
+  turnAssistMinSpeed: 2.5
+  understeer: 0.006
   frontGrip: 0.92
   rearGrip: 0.86
   handbrakeGrip: 0.18
-  maxGripForce: 14000
+  maxGripForce: 30000
   centreOfMassOffset: {x: 0, y: -0.6, z: 0}
   downforce: 1.3
   airControlTorque: 9000
+  groundedAngularDamping: 2
+  airAngularDamping: 0.3
+  maxAirSpin: 190
   debugSpeed: 0
 --- !u!114 &2305144326556702791
 MonoBehaviour:
@@ -564,6 +571,7 @@ MonoBehaviour:
   minimumImpulse: 900
   damagePerImpulse: 0.045
   maxDamagePerImpact: 60
+  carVsCarDamage: 3
   partReach: 1.6
   ejectSpeed: 3.5
   ejectSpin: 9

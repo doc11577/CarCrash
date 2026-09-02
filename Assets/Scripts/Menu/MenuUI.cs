@@ -49,16 +49,16 @@ public class MenuUI : MonoBehaviour
     /// Keep it short. There is room for about eight lines between the gears line and the tagline
     /// before it collides with them, and nothing here measures that for you.
     /// </remarks>
-    const string PatchTitle = "UPDATE 1";
+    const string PatchTitle = "UPDATE 2";
 
     const string PatchNotes =
-        "·  Improved lighting, with skies themed per map\n" +
-        "·  New map — Everest, a 70° bombing run down the mountain\n" +
-        "·  New car — LCT 3000 box truck, 12 parts to lose\n" +
-        "·  Smarter AI — better cornering, obstacle dodging and recovery\n" +
-        "·  More AI cars, now drawn from the whole roster\n" +
-        "·  Feats — bonus gears for stunts like losing every wheel\n" +
-        "·  Reset your progress from the Options screen";
+        "·  New map — Bullseye\n" +
+        "·  New map — The Dam, a canyon run\n" +
+        "·  New car — Lamborghini Aventador\n" +
+        "·  Falling boulders down the sides of Quarry\n" +
+        "·  Airtime — Earn gears for airtime\n" +
+        "·  Quality of Life Updates\n" +
+        "·  New garage, a speedometer, and save codes";
 
     [Header("Content")]
     public string title = "CAR CRASH";
@@ -84,6 +84,10 @@ public class MenuUI : MonoBehaviour
     TextMeshProUGUI actionLabel;
     UnityEngine.UI.Button actionButton;
     TextMeshProUGUI carCredit;
+    TextMeshProUGUI carName;
+    CarPodium podium;
+    UnityEngine.UI.Image pageBackdrop;
+    GameObject shownPrefab;
     TMP_InputField devField;
     TextMeshProUGUI devStatus;
     TextMeshProUGUI fullscreenLabel;
@@ -91,6 +95,10 @@ public class MenuUI : MonoBehaviour
     UnityEngine.UI.Button resetButton;
     TextMeshProUGUI resetLabel;
     TextMeshProUGUI resetNote;
+    TextMeshProUGUI saveHealthLine;
+    TextMeshProUGUI saveMessage;
+    TMP_InputField saveCodeField;
+    TMP_InputField saveLoadField;
     bool resetArmed;
     int carIndex;
 
@@ -105,8 +113,22 @@ public class MenuUI : MonoBehaviour
 
         UiKit.EnsureEventSystem();
 
+        // Optional: without one the garage still works, it just has no car on show.
+        podium = FindFirstObjectByType<CarPodium>();
+
+        // Before anything reads the wallet. It counts this launch, and a counter that came back
+        // from a previous session is the only real proof that this browser saves at all.
+        SaveHealth.Check();
+
         root = UiKit.Screen(transform, "Menu", 0);
-        UiKit.Backdrop(root, UiKit.Ground);
+
+        // Kept as a field so the garage can switch it OFF. It is an opaque full-screen image, so
+        // with it on the podium and its backdrop are drawn and then covered up by it — the car
+        // would be rendering perfectly and invisibly behind a black rectangle.
+        // The flat fallback background. Switched off entirely when a CarPodium is present, since
+        // its animated backdrop is drawn in the world BEHIND this and would be covered up.
+        pageBackdrop = UiKit.Backdrop(root, UiKit.Ground);
+        if (podium != null) pageBackdrop.enabled = false;
 
         pages[Page.Main] = BuildMain();
         pages[Page.Maps] = BuildMaps();
@@ -222,46 +244,49 @@ public class MenuUI : MonoBehaviour
                                new Vector2(900f, 40f));
 
         carButtons.Clear();
-        CarRoster.Entry[] entries = Entries();
 
-        // The roster GROWS, so the list gets a band rather than a fixed step. At two cars this
-        // is identical to the old fixed layout; the third car is what made the blurb, the OWNED
-        // line and the CC-BY credit draw straight through the bottom button.
-        UiKit.ListBand band = UiKit.Band(top: 209f, bottom: -58f, count: entries.Length,
-                                         maxSlot: 96f, padding: 11f, maxHeight: 78f);
+        // ONE car at a time on a podium, cycled with arrows, rather than a list of every car.
+        // The list was fine at two cars and was already compressing itself at three; a carousel
+        // does not care how big the roster gets, and it is what the reference game does.
+        //
+        // No backdrop panel behind any of this: the podium draws the background in the WORLD,
+        // and a Screen Space Overlay canvas is composited on top of it for free.
+        carName = UiKit.Text(page.transform, "", 62f, UiKit.Ink,
+                             TextAlignmentOptions.Center, new Vector2(0f, -120f),
+                             new Vector2(1100f, 80f));
+        carName.fontStyle = FontStyles.Bold;
 
-        for (int i = 0; i < entries.Length; i++)
-        {
-            int index = i;
-            carButtons.Add(UiKit.Button(page.transform, entries[i].displayName,
-                                        new Vector2(0f, band.Centre(i)),
-                                        new Vector2(660f, band.height), () => ChooseCar(index),
-                                        fontSize: band.fontSize));
-        }
+        UiKit.Button(page.transform, "<", new Vector2(-470f, 30f), new Vector2(110f, 110f),
+                     () => Cycle(-1), fontSize: 54f);
+
+        UiKit.Button(page.transform, ">", new Vector2(470f, 30f), new Vector2(110f, 110f),
+                     () => Cycle(1), fontSize: 54f);
 
         carBlurb = UiKit.Text(page.transform, "", 26f, UiKit.Muted,
-                              TextAlignmentOptions.Center, new Vector2(0f, -86f),
+                              TextAlignmentOptions.Center, new Vector2(0f, -192f),
                               new Vector2(900f, 36f));
 
         carStatus = UiKit.Text(page.transform, "", 30f, UiKit.Ink,
-                               TextAlignmentOptions.Center, new Vector2(0f, -134f),
+                               TextAlignmentOptions.Center, new Vector2(0f, -238f),
                                new Vector2(900f, 40f));
 
         // Attribution lives here because this is the screen the car is chosen on, and CC-BY
         // requires the credit to be visible in the product, not only in CREDITS.md.
         // Three cars now carry a credit line, so this is load-bearing rather than decorative.
         carCredit = UiKit.Text(page.transform, "", 21f, UiKit.Muted,
-                               TextAlignmentOptions.Center, new Vector2(0f, -178f),
+                               TextAlignmentOptions.Center, new Vector2(0f, -372f),
                                new Vector2(1100f, 30f));
 
         // ONE action button that changes meaning, rather than a BUY and a GO sitting side by
         // side with one of them always dead. What you can do with the selected car is never
         // both at once.
-        actionButton = UiKit.Button(page.transform, "GO", new Vector2(0f, -258f),
+        actionButton = UiKit.Button(page.transform, "GO", new Vector2(0f, -310f),
                                     new Vector2(440f, 78f), Act, accent: true);
         actionLabel = actionButton.GetComponentInChildren<TextMeshProUGUI>();
 
-        UiKit.Button(page.transform, "BACK", new Vector2(0f, -380f), new Vector2(280f, 62f),
+        // Lower than every other page's BACK: the garage is the only screen with a name, a
+        // blurb, a status line, an action button AND a licence credit stacked under the podium.
+        UiKit.Button(page.transform, "BACK", new Vector2(0f, -440f), new Vector2(280f, 62f),
                      () => Show(Page.Maps));
 
         return page;
@@ -272,25 +297,64 @@ public class MenuUI : MonoBehaviour
         GameObject page = NewPage("Options");
 
         UiKit.Text(page.transform, "OPTIONS", 64f, UiKit.Ink,
-                   TextAlignmentOptions.Center, new Vector2(0f, 300f), new Vector2(1200f, 90f))
+                   TextAlignmentOptions.Center, new Vector2(0f, 455f), new Vector2(1200f, 90f))
              .fontStyle = FontStyles.Bold;
 
-        UiKit.Text(page.transform, "Dev mode", 30f, UiKit.Ink,
-                   TextAlignmentOptions.Right, new Vector2(-330f, 90f), new Vector2(240f, 46f));
+        // ---- saving ----------------------------------------------------------------------
+        // The game already saves to IndexedDB through PlayerPrefs. This block exists because
+        // that can fail SILENTLY inside a sandboxed Google Sites iframe, and because a code is
+        // the only way to carry progress from the school Chromebook to another machine.
+        UiKit.Text(page.transform, "SAVING", 26f, UiKit.Accent,
+                   TextAlignmentOptions.Center, new Vector2(0f, 370f), new Vector2(900f, 30f))
+             .fontStyle = FontStyles.Bold;
 
-        devField = UiKit.Field(page.transform, "code", new Vector2(-30f, 90f),
+        saveHealthLine = UiKit.Text(page.transform, "", 24f, UiKit.Muted,
+                                    TextAlignmentOptions.Center, new Vector2(0f, 332f),
+                                    new Vector2(1100f, 28f));
+
+        UiKit.Text(page.transform, "Your save code — select it and press Ctrl+C to keep it",
+                   22f, UiKit.Muted, TextAlignmentOptions.Center,
+                   new Vector2(0f, 296f), new Vector2(1100f, 26f));
+
+        // A read-only field rather than a label, because a field can be selected and copied.
+        // Clipboard writes from script are unreliable in a sandboxed cross-origin iframe, so
+        // Ctrl+C on a real selection is the path that always works; COPY is a convenience that
+        // is allowed to fail.
+        saveCodeField = UiKit.Field(page.transform, "", new Vector2(-70f, 250f),
+                                    new Vector2(620f, 50f), 22f);
+        saveCodeField.readOnly = true;
+
+        UiKit.Button(page.transform, "COPY", new Vector2(300f, 250f), new Vector2(160f, 50f),
+                     CopySaveCode, fontSize: 24f);
+
+        saveLoadField = UiKit.Field(page.transform, "paste a save code here",
+                                    new Vector2(-70f, 190f), new Vector2(620f, 50f), 22f);
+        saveLoadField.onSubmit.AddListener(_ => LoadSaveCode());
+
+        UiKit.Button(page.transform, "LOAD", new Vector2(300f, 190f), new Vector2(160f, 50f),
+                     LoadSaveCode, fontSize: 24f);
+
+        saveMessage = UiKit.Text(page.transform, "", 22f, UiKit.Muted,
+                                 TextAlignmentOptions.Center, new Vector2(0f, 145f),
+                                 new Vector2(1100f, 26f));
+
+        // ---- dev mode --------------------------------------------------------------------
+        UiKit.Text(page.transform, "Dev mode", 30f, UiKit.Ink,
+                   TextAlignmentOptions.Right, new Vector2(-330f, 60f), new Vector2(240f, 46f));
+
+        devField = UiKit.Field(page.transform, "code", new Vector2(-30f, 60f),
                                new Vector2(340f, 56f));
         devField.contentType = TMP_InputField.ContentType.Password;
         devField.onSubmit.AddListener(_ => SubmitDevCode());
 
-        UiKit.Button(page.transform, "SUBMIT", new Vector2(240f, 90f), new Vector2(200f, 56f),
+        UiKit.Button(page.transform, "SUBMIT", new Vector2(240f, 60f), new Vector2(200f, 56f),
                      SubmitDevCode);
 
         devStatus = UiKit.Text(page.transform, "", 26f, UiKit.Muted,
-                               TextAlignmentOptions.Center, new Vector2(0f, 10f),
+                               TextAlignmentOptions.Center, new Vector2(0f, 0f),
                                new Vector2(1000f, 40f));
 
-        UiKit.Button(page.transform, "TURN DEV MODE OFF", new Vector2(0f, -80f),
+        UiKit.Button(page.transform, "TURN DEV MODE OFF", new Vector2(0f, -70f),
                      new Vector2(440f, 60f), () =>
                      {
                          DevMode.Disable();
@@ -303,16 +367,16 @@ public class MenuUI : MonoBehaviour
         // else for input focus to get lost, for a control used about once a year.
         // It disarms whenever the Options page is left, so a stray press cannot sit armed
         // waiting for an unrelated click later.
-        resetButton = UiKit.Button(page.transform, "", new Vector2(0f, -265f),
+        resetButton = UiKit.Button(page.transform, "", new Vector2(0f, -235f),
                                    new Vector2(440f, 60f), ResetPressed);
         resetLabel = resetButton.GetComponentInChildren<TextMeshProUGUI>();
 
         resetNote = UiKit.Text(page.transform, "", 22f, UiKit.Muted,
-                               TextAlignmentOptions.Center, new Vector2(0f, -322f),
+                               TextAlignmentOptions.Center, new Vector2(0f, -288f),
                                new Vector2(1000f, 28f));
 
         fullscreenLabel = UiKit.Button(page.transform, Fullscreen.Label,
-                                       new Vector2(0f, -180f), new Vector2(440f, 60f),
+                                       new Vector2(0f, -150f), new Vector2(440f, 60f),
                                        () =>
                                        {
                                            Fullscreen.Toggle();
@@ -404,10 +468,20 @@ public class MenuUI : MonoBehaviour
         foreach (KeyValuePair<Page, GameObject> entry in pages)
             entry.Value.SetActive(entry.Key == page);
 
+        // The animated backdrop is the background for the WHOLE front end, so only the plinth
+        // and the car are hidden off the garage page — never the podium component itself, which
+        // owns the backdrop, the lights and the pointer tracking.
+        //
+        // BEFORE RefreshCars, not after: RefreshCars builds the car into the mount, and doing
+        // that while the mount is still switched off from the last visit means the whole car is
+        // assembled inside an inactive hierarchy.
+        if (podium != null) podium.SetShowcase(page == Page.Cars);
+
         // Repaint on arrival rather than only at build time, because a reset can change the
         // wallet, ownership and dev mode while every page already exists.
         if (page == Page.Main) RefreshMain();
         if (page == Page.Cars) RefreshCars();
+        if (page == Page.Options) RefreshSave();
         if (page != Page.Options) DisarmReset();
     }
 
@@ -418,6 +492,58 @@ public class MenuUI : MonoBehaviour
         mainStatus.text =
             $"{PlayerWallet.Gears:N0} gears banked   ·   best run {PlayerWallet.BestRun:N0}"
             + (DevMode.Enabled ? "   ·   DEV" : "");
+    }
+
+    /// <summary>
+    /// Repaint the saving block. The code has to be regenerated on every visit, because gears,
+    /// best run and ownership all change between one look at this screen and the next — a code
+    /// captured at build time would quietly hand the player a stale save.
+    /// </summary>
+    void RefreshSave()
+    {
+        if (saveHealthLine != null)
+        {
+            saveHealthLine.color = SaveHealth.ShouldWarn ? UiKit.Accent : UiKit.Muted;
+            saveHealthLine.text = SaveHealth.Line;
+        }
+
+        if (saveCodeField != null) saveCodeField.text = SaveCode.Export();
+    }
+
+    void CopySaveCode()
+    {
+        if (saveCodeField == null) return;
+
+        // Fails silently in some sandboxed iframes, which is why the field is selectable and the
+        // label above it tells the player to use Ctrl+C. Never claim the copy worked.
+        GUIUtility.systemCopyBuffer = saveCodeField.text;
+
+        if (saveMessage != null)
+        {
+            saveMessage.color = UiKit.Muted;
+            saveMessage.text = "Copied — if nothing was copied, click the code and press Ctrl+C.";
+        }
+    }
+
+    void LoadSaveCode()
+    {
+        if (saveLoadField == null) return;
+
+        bool ok = SaveCode.TryImport(saveLoadField.text, out string message);
+
+        if (saveMessage != null)
+        {
+            saveMessage.color = ok ? UiKit.Muted : UiKit.Accent;
+            saveMessage.text = message;
+        }
+
+        if (!ok) return;
+
+        saveLoadField.text = "";
+        carIndex = 0;
+        RefreshSave();
+        RefreshCars();
+        RefreshMain();
     }
 
     /// <summary>First press arms, second press erases. See BuildOptions for why.</summary>
@@ -445,11 +571,16 @@ public class MenuUI : MonoBehaviour
         // short of re-entering the code anyway.
         DevMode.Disable();
 
+        // Tuned cars are progress too — and a tuned car makes "what does a new player see"
+        // impossible to answer, which is the main reason this button exists.
+        CarTuning.ResetAll();
+
         carIndex = 0;
         DisarmReset();
         RefreshDev();
         RefreshCars();
         RefreshMain();
+        RefreshSave();
 
         if (resetNote != null)
         {
@@ -487,6 +618,22 @@ public class MenuUI : MonoBehaviour
         Show(Page.Cars);
     }
 
+    /// <summary>
+    /// Step to the next or previous car and sweep the backdrop the way the player clicked.
+    /// </summary>
+    /// <remarks>
+    /// Wraps, so the roster is a loop with no dead arrow at either end. A disabled arrow reads
+    /// as a bug, the same reason the action button changes meaning instead of greying out.
+    /// </remarks>
+    void Cycle(int step)
+    {
+        CarRoster.Entry[] entries = Entries();
+        if (entries.Length == 0) return;
+
+        if (podium != null) podium.Sweep(step);
+        ChooseCar((carIndex + step + entries.Length) % entries.Length);
+    }
+
     void ChooseCar(int index)
     {
         CarRoster.Entry[] entries = Entries();
@@ -510,8 +657,18 @@ public class MenuUI : MonoBehaviour
         CarRoster.Entry car = entries[Mathf.Clamp(carIndex, 0, entries.Length - 1)];
 
         if (gearsLine != null) gearsLine.text = $"{PlayerWallet.Gears:N0} gears";
+        if (carName != null) carName.text = car.displayName;
         if (carBlurb != null) carBlurb.text = car.blurb;
         if (carCredit != null) carCredit.text = car.credit;
+
+        // Only rebuild the model when the car actually changed. RefreshCars runs on every visit
+        // to the page and after every purchase, and respawning an 11,000-triangle prefab for a
+        // changed price label would be a visible hitch for nothing.
+        if (podium != null && car.prefab != shownPrefab)
+        {
+            shownPrefab = car.prefab;
+            podium.Show(car.prefab);
+        }
 
         if (carStatus != null)
         {

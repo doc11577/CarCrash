@@ -110,6 +110,13 @@ public class CarDamage : MonoBehaviour
              "the car in one crash. Does not cap TotalDamage, which still scores the full hit.")]
     public float maxDamagePerImpact = 60f;
 
+    [Tooltip("Multiplies damage when the other thing is ANOTHER CAR. Environment damage is not " +
+             "affected. Two vehicles meeting is the moment this game is about, and at the shared " +
+             "rate a car-to-car hit read as no more eventful than brushing a rock. " +
+             "It applies to both cars, since each runs its own collision callback for the same " +
+             "impact — so a big hit is mutually destructive rather than one-sided.")]
+    public float carVsCarDamage = 3f;
+
     [Tooltip("How far from a contact point a part can be and still take the hit, in metres.")]
     public float partReach = 1.6f;
 
@@ -145,7 +152,15 @@ public class CarDamage : MonoBehaviour
     /// once; a grind down a wall raises it every <see cref="sustainedInterval"/> (0.08 s), so a
     /// combo meter that counted both would reach its cap in half a second of scraping.
     /// </remarks>
-    public event Action<float, Vector3, bool> Damaged;
+    /// <summary>(source, damage, where, sustained, causedByThePlayersCar)</summary>
+    /// <remarks>
+    /// The SOURCE is on the event because a listener otherwise cannot tell which car was hurt,
+    /// and `byPlayer` because it cannot tell who did it. RunScore needs both: damage to your own
+    /// car always scores, damage to traffic scores only when YOU caused it, and traffic wrecking
+    /// itself on a wall must pay nothing — which is the exact objection that kept
+    /// TrafficSpawner.scoreTrafficDamage switched off.
+    /// </remarks>
+    public event Action<CarDamage, float, Vector3, bool, bool> Damaged;
 
     /// <summary>Raised when a part comes off, with the part that went.</summary>
     public event Action<Part> PartLost;
@@ -246,13 +261,26 @@ public class CarDamage : MonoBehaviour
 
         Vector3 contact = collision.GetContact(0).point;
         float damage = (impulse - minimumImpulse) * damagePerImpulse * scale;
+
+        // Car on car hits far harder than car on scenery. Two vehicles meeting is the moment
+        // this game is about, and at the shared rate it read as no more eventful than brushing
+        // a rock. Environment damage is deliberately untouched — only this multiplier moved.
+        //
+        // It applies to BOTH cars, because each one runs its own OnCollisionEnter for the same
+        // impact, which is what makes a big hit mutually destructive rather than one-sided.
+        CarDamage other = collision.gameObject.GetComponentInParent<CarDamage>();
+        bool byPlayer = other != null && PlayerCar.Current != null
+                                     && other == PlayerCar.Current.Damage;
+
+        if (other != null) damage *= carVsCarDamage;
+
         if (damage <= 0f) return;
 
         lastImpulse = impulse;
         lastDamage = damage;
 
         TotalDamage += damage;
-        Damaged?.Invoke(damage, contact, sustained);
+        Damaged?.Invoke(this, damage, contact, sustained, byPlayer);
 
         // Crumple the panel before deciding whether it comes off, so a hit that happens to be
         // the fatal one still leaves its dent on the piece that flies away.

@@ -57,7 +57,7 @@ public class CarGlass : MonoBehaviour
         if (damage != null) damage.Damaged -= OnDamaged;
     }
 
-    void OnDamaged(float amount, Vector3 where, bool sustained)
+    void OnDamaged(CarDamage source, float amount, Vector3 where, bool sustained, bool byPlayer)
     {
         if (shattered || damage == null) return;
         if (damage.TotalDamage < shatterAtDamage) return;

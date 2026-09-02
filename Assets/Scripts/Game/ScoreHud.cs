@@ -69,6 +69,15 @@ public class ScoreHud : MonoBehaviour
     [Tooltip("Font size of a popup, at a 1920x1080 reference resolution.")]
     public float popupSize = 34f;
 
+    [Header("Airtime")]
+    [Tooltip("Size of the live AIRTIME counter. It grows by half again once the jump passes " +
+             "RunScore.airGoldAt.")]
+    public float airtimeSize = 46f;
+
+    [Header("Speedometer")]
+    [Tooltip("Font size of the speed readout, bottom right.")]
+    public float speedoSize = 62f;
+
     [Header("Read-only — watch these in play mode")]
     [Tooltip("False means the HUD never found a RunScore, so the counter is frozen at the 0 it " +
              "was built with and nothing else here matters.")]
@@ -94,9 +103,18 @@ public class ScoreHud : MonoBehaviour
     /// <summary>Width of the combo bar at the reference resolution.</summary>
     const float ComboBarWidth = 220f;
 
+    /// <summary>CarController works in metres per second; the readout is in MPH.</summary>
+    const float MetresPerSecondToMph = 2.236936f;
+
     RectTransform dynamicRect;
     TextMeshProUGUI counter;
     TextMeshProUGUI multiplier;
+    TextMeshProUGUI airtime;
+    float airSize;
+    TextMeshProUGUI speedo;
+    TextMeshProUGUI speedoUnit;
+    CarController speedCar;
+    int lastSpeedShown = -1;
     RectTransform comboFill;
     Image comboBar;
     Image comboTrack;
@@ -125,6 +143,8 @@ public class ScoreHud : MonoBehaviour
 
         BuildCounter(staticRect);
         BuildCombo(dynamicRect);
+        BuildAirtime(dynamicRect);
+        BuildSpeedo(dynamicRect);
         BuildFloaters(dynamicRect);
     }
 
@@ -185,6 +205,77 @@ public class ScoreHud : MonoBehaviour
         counter.alignment = TextAlignmentOptions.TopRight;
         counter.fontStyle = FontStyles.Bold;
         counter.text = "0";
+    }
+
+    void BuildAirtime(RectTransform parent)
+    {
+        airtime = MakeText(parent, "Airtime", airtimeSize, Color.white);
+
+        // Above centre: high enough to be clear of the car through most of a jump, low enough
+        // to sit in the same glance as the road ahead.
+        Anchor(airtime.rectTransform, new Vector2(0f, 0f), new Vector2(700f, 170f));
+        airtime.rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
+        airtime.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+        airtime.rectTransform.anchoredPosition = new Vector2(0f, 150f);
+
+        airtime.alignment = TextAlignmentOptions.Center;
+        airtime.fontStyle = FontStyles.Bold;
+        airtime.enabled = false;
+
+        airSize = airtimeSize;
+    }
+
+    /// <summary>
+    /// Speedometer, bottom right.
+    /// </summary>
+    /// <remarks>
+    /// On the DYNAMIC canvas: it changes constantly, and a uGUI canvas rebuilds its whole batch
+    /// when anything on it changes — putting a speedo beside the gear counter would rebuild the
+    /// counter every frame of the entire run.
+    ///
+    /// Anchored bottom-right by hand rather than through <see cref="Anchor"/>, which is
+    /// hard-wired to the top-right corner the counter uses.
+    /// </remarks>
+    void BuildSpeedo(RectTransform parent)
+    {
+        speedo = MakeText(parent, "Speed", speedoSize, accent);
+        speedo.rectTransform.anchorMin = new Vector2(1f, 0f);
+        speedo.rectTransform.anchorMax = new Vector2(1f, 0f);
+        speedo.rectTransform.pivot = new Vector2(1f, 0f);
+        speedo.rectTransform.anchoredPosition = new Vector2(-34f, 44f);
+        speedo.rectTransform.sizeDelta = new Vector2(320f, 78f);
+        speedo.alignment = TextAlignmentOptions.BottomRight;
+        speedo.fontStyle = FontStyles.Bold;
+        speedo.text = "0";
+
+        speedoUnit = MakeText(parent, "SpeedUnit", 24f, muted);
+        speedoUnit.rectTransform.anchorMin = new Vector2(1f, 0f);
+        speedoUnit.rectTransform.anchorMax = new Vector2(1f, 0f);
+        speedoUnit.rectTransform.pivot = new Vector2(1f, 0f);
+        speedoUnit.rectTransform.anchoredPosition = new Vector2(-34f, 16f);
+        speedoUnit.rectTransform.sizeDelta = new Vector2(320f, 28f);
+        speedoUnit.alignment = TextAlignmentOptions.BottomRight;
+        speedoUnit.text = "MPH";
+        speedoUnit.characterSpacing = 8f;
+    }
+
+    void UpdateSpeedo()
+    {
+        if (speedo == null) return;
+
+        // Acquired lazily, and re-acquired when the car changes, for the same reason the camera
+        // and the chase cam do it: the player's car is SPAWNED, so there is nothing to read at
+        // Awake, and the garage can hand over a different one between runs.
+        if (speedCar == null && PlayerCar.Current != null) speedCar = PlayerCar.Current.Controller;
+
+        int mph = speedCar != null ? Mathf.RoundToInt(speedCar.Speed * MetresPerSecondToMph) : 0;
+        if (mph == lastSpeedShown) return;
+
+        lastSpeedShown = mph;
+
+        // The allocation-free overload. This changes most frames of a run, so a ToString() here
+        // would allocate for the entire session.
+        speedo.SetText("{0}", mph);
     }
 
     void BuildCombo(RectTransform parent)
@@ -288,7 +379,49 @@ public class ScoreHud : MonoBehaviour
 
         UpdateCounter();
         UpdateCombo();
+        UpdateAirtime();
+        UpdateSpeedo();
         UpdateFloaters();
+    }
+
+    /// <summary>
+    /// The live airtime counter: climbs while the car is off the ground, then vanishes when it
+    /// lands and <see cref="RunScore"/> fires the popup that banks it.
+    /// </summary>
+    /// <remarks>
+    /// On the DYNAMIC canvas, not the static one. It changes every frame while airborne, and a
+    /// uGUI canvas rebuilds its whole batch when any element on it changes — putting this beside
+    /// the gear counter would rebuild the counter every frame of every jump.
+    ///
+    /// Fixed to the screen rather than pinned to the car in world space, unlike the score
+    /// popups. A jumping car crosses most of the screen and rotates while it does it, so a label
+    /// stuck to it is the one thing on screen you cannot read at the moment you want to.
+    ///
+    /// The size eases toward its target instead of snapping, so crossing the gold threshold
+    /// reads as the number swelling rather than as a different label appearing.
+    /// </remarks>
+    void UpdateAirtime()
+    {
+        if (airtime == null) return;
+
+        bool show = score.AirShowing;
+        if (airtime.enabled != show) airtime.enabled = show;
+        if (!show)
+        {
+            airSize = airtimeSize;
+            return;
+        }
+
+        // Allocation-free: the composing overload, never string concatenation. This runs every
+        // frame of every jump.
+        airtime.SetText("AIRTIME\n+{0}", score.AirGears);
+
+        bool big = score.AirIsBig;
+        airtime.color = big ? accent : Color.white;
+
+        float target = big ? airtimeSize * 1.5f : airtimeSize;
+        airSize = Mathf.Lerp(airSize, target, 1f - Mathf.Exp(-12f * Time.unscaledDeltaTime));
+        airtime.fontSize = airSize;
     }
 
     void UpdateCounter()

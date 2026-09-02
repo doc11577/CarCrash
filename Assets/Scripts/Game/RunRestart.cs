@@ -33,6 +33,10 @@ public class RunRestart : MonoBehaviour
         if (Time.unscaledTime < armedAt) return;
         if (RestartOverlay.InProgress) return;
 
+        // The dev tuner puts editable number boxes on the pause screen, and R would throw away
+        // the run being tuned. The keypress arrives whether or not the field accepts the letter.
+        if (UiKit.Typing()) return;
+
         Keyboard kb = Keyboard.current;
         if (kb == null) return;
 

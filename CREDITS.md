@@ -253,3 +253,62 @@ roughness and height dropped entirely:
 
 `lct3000-split.fbx` is derived from `Source/lct3000.fbx` by `tools/blender/split_car.py`.
 CC-BY permits modification provided attribution is kept.
+
+---
+
+## Lamborghini Aventador — fastest car
+
+- **Author:** Arion Digital (@andrewswihart)
+- **Source:** https://sketchfab.com/3d-models/lamborghini-aventador-888e37a3641d4f7b94bc1a39396e2441
+- **License:** [CC Attribution 4.0](https://creativecommons.org/licenses/by/4.0/)
+- **Attribution required:** **YES.** Credit "Lamborghini Aventador by Arion Digital (CC-BY)"
+  in-game, on the car select screen alongside the other three.
+- **Location:** `Assets/Art/Vehicles/Aventador/`
+- **Retrieved:** 2026-09-01 (model published 2019-12-16)
+
+Licence confirmed through the Sketchfab API rather than the download, which carried no licence
+file — the same check the LCT 3000 needed. The FBX's own timestamp (2019-12-16) matches the
+model's publish date exactly, which is what identified WHICH of the many free Aventador uploads
+this actually is.
+
+Measured, not quoted: **10,374 tris across 7 objects**, authored in **centimetres** (4.89 m long
+at cm scale). Sketchfab reports 10,252 faces; the difference is n-gon triangulation. Structure is
+unusually good for a free model:
+
+- `Body`, `Glass` and four separately named wheels — `Wheel_FL/FR/RL/RR`, already per corner.
+- Wheelbase **2.75 m** and track **1.70 m**, against the real car's 2.70 and 1.72. Front wheels
+  are 0.69 m across and rears 0.73, which is correct for the car and is also how the nose
+  direction was identified.
+- A 122-triangle `Collider` proxy, **dropped** — this project builds its own three collision
+  boxes and a mesh collider on a car is the wrong shape anyway.
+- Three materials: `Lamborginhi_base_phong`, `Lamborginhi_glass_phong`, and the collider's.
+  Glass being its own material is what lets `CarGlass` work on this car, unlike the P72.
+
+**⚠ THE DOWNLOAD IS AN ASCII FBX, WHICH BLENDER CANNOT OPEN AT ALL.** Unity imports it happily,
+so the model looks fine while the entire Blender pipeline — inspection, splitting, previews — is
+unavailable. `tools/blender/fbx_ascii_to_binary.py` was written for it. See CLAUDE.md.
+
+Textures were **3.0 MB** of diffuse/spec/gloss. Reduced to a single **0.57 MB
+`aventador_body.png`** — base colour only, 2048² down to 1024², spec and gloss dropped entirely,
+following the E30, P72 and LCT 3000 precedent.
+
+Build, in two steps because of the ASCII format:
+
+```bash
+"$BL" --background --python tools/blender/fbx_ascii_to_binary.py -- \
+  --input Assets/Art/Vehicles/Aventador/Source/aventador.fbx \
+  --output /tmp/aventador-bin.fbx --scale 0.01
+
+"$BL" --background --python tools/blender/split_car.py -- \
+  --input /tmp/aventador-bin.fbx \
+  --output Assets/Art/Vehicles/Aventador/aventador-split.fbx \
+  --tris 11000 --profile midengine --nose +z --up y --drop "Collider"
+```
+
+`aventador-split.fbx` is derived from `Source/aventador.fbx`. CC-BY permits modification
+provided attribution is kept.
+
+**Trademark note, for completeness:** Lamborghini is a trademarked marque, as are BMW and De
+Tomaso, both already in this game. The CC-BY licence covers the MODEL, not the brand. For a
+non-commercial school project that is the same position the other three cars are already in; it
+would need looking at properly before anything is ever sold.
