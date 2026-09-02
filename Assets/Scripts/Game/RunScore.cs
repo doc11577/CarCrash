@@ -321,9 +321,21 @@ public class RunScore : MonoBehaviour
         if (!car.Touching)
         {
             Airborne = true;
+            touchingFor = 0f;
             AirTime = Mathf.Min(AirTime + dt, maxAirTime);
             return;
         }
+
+        // ONE timer until you actually land. Ending the jump on the first frame of contact made
+        // a single graze — a wingtip on a rock face, a wheel clipping a ledge mid-flight —
+        // bank the jump and restart the counter from zero while the car was still in the air.
+        // Reported on Everest, which is a jagged 70-degree face and grazes constantly, and it
+        // read as "the timer resets for no reason".
+        //
+        // Contact has to PERSIST to count as a landing. A graze is contact for a frame or two;
+        // a landing is contact that stays.
+        touchingFor += dt;
+        if (touchingFor < landingGrace) return;
 
         if (Airborne && AirTime >= minAirTime)
         {
@@ -341,7 +353,18 @@ public class RunScore : MonoBehaviour
 
         Airborne = false;
         AirTime = 0f;
+        touchingFor = 0f;
     }
+
+    /// <summary>How long the car has been in continuous contact. See <see cref="landingGrace"/>.</summary>
+    float touchingFor;
+
+    [Tooltip("Seconds of CONTINUOUS contact before a jump counts as landed. A graze against a " +
+             "rock face mid-flight is contact for a frame or two; a landing is contact that " +
+             "stays. Without this the timer banks and restarts from zero every time the car " +
+             "brushes anything, which on Everest is constantly.\n\n" +
+             "Too high and a genuine landing that immediately bounces reads as one long jump.")]
+    public float landingGrace = 0.2f;
 
     [Tooltip("Colour of the airtime popup once it passes the gold threshold.")]
     public Color airColour = new Color(1f, 0.78f, 0.15f);
@@ -396,11 +419,25 @@ public class RunScore : MonoBehaviour
         Multiplier = Mathf.Min(Multiplier + comboPerHit, maxMultiplier);
     }
 
-    void OnPartLost(CarDamage.Part part)
+    void OnPartLost(CarDamage source, CarDamage.Part part, bool byPlayer)
     {
         if (part == null) return;
 
-        int bonus = Mathf.RoundToInt(part.startingHealth * gearsPerPartHealth * Multiplier);
+        // The SAME rule OnDamaged uses, and it was missing here. A part off your own car always
+        // pays; a part off anyone else's pays only when you knocked it off. Without this, every
+        // traffic car that wrecked itself on a rock paid the player and threw a popup — and
+        // since there are only eight popup slots, that spam recycled the WRECKER popups before
+        // they could be read, which is why car-on-car scoring looked broken as well.
+        //
+        // Worst on Everest, where obstacleAvoidance is 0 by design so the field ploughs into the
+        // scenery constantly. That is why it looked map-specific.
+        bool mine = source == playerCar;
+        if (!mine && !byPlayer) return;
+
+        // Wrecking someone else's panel pays at the PvP rate, for the same reason their damage
+        // does: it is a deliberate act, where losing your own is mostly just what happens.
+        float rate = mine ? gearsPerPartHealth : gearsPerPartHealth * (gearsPerPvpDamage / Mathf.Max(0.0001f, gearsPerDamage));
+        int bonus = Mathf.RoundToInt(part.startingHealth * rate * Multiplier);
         if (bonus <= 0) return;
 
         Score += bonus;
@@ -409,7 +446,9 @@ public class RunScore : MonoBehaviour
         // rather than a point on the car. That is the right place for the popup — it tracks
         // the thing the player is actually watching leave.
         Vector3 at = part.visual != null ? part.visual.position : transform.position;
-        Scored?.Invoke(part.Label + "  +" + bonus, at, Color.white, false);
+        Scored?.Invoke(mine ? part.Label + "  +" + bonus
+                            : "WRECKER  " + part.Label + "  +" + bonus,
+                       at, mine ? Color.white : pvpColour, !mine);
 
         CheckFeats(at);
     }

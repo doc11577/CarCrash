@@ -588,7 +588,7 @@ MonoBehaviour:
   scoreReadout: 0
   multiplierReadout: 0
   featsEarned: 0
-  minAirTime: 0.45
+  minAirTime: 0.8
   gearsPerAirSecond: 26
   airGoldAt: 65
   maxAirTime: 200

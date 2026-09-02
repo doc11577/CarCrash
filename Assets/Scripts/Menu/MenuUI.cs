@@ -651,7 +651,13 @@ public class MenuUI : MonoBehaviour
         // Only rebuild the model when the car actually changed. RefreshCars runs on every visit
         // to the page and after every purchase, and respawning an 11,000-triangle prefab for a
         // changed price label would be a visible hitch for nothing.
-        if (podium != null && car.prefab != shownPrefab)
+        //
+        // **`|| !podium.HasCar` is the important half.** Caching on the prefab alone means that
+        // if the car goes missing for any reason, this says "already showing that one" forever
+        // and the podium stays empty for the rest of the session. Asking whether a car is
+        // actually there costs nothing and makes an empty podium recover on the next arrow
+        // press, page visit or purchase.
+        if (podium != null && (car.prefab != shownPrefab || !podium.HasCar))
         {
             shownPrefab = car.prefab;
             podium.Show(car.prefab);

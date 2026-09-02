@@ -571,7 +571,7 @@ MonoBehaviour:
   minimumImpulse: 900
   damagePerImpulse: 0.045
   maxDamagePerImpact: 60
-  carVsCarDamage: 3
+  carVsCarDamage: 1
   partReach: 1.6
   ejectSpeed: 3.5
   ejectSpin: 9

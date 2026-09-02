@@ -82,6 +82,24 @@ public class CarPodium : MonoBehaviour
     Camera view;
     Transform mount;
     GameObject current;
+
+    /// <summary>True while a car is actually standing on the podium.</summary>
+    /// <remarks>
+    /// Exists so callers can ask rather than assume. `MenuUI` caches the prefab it last showed
+    /// and skips the rebuild when it has not changed — which is right for the common case (a
+    /// price label changing must not respawn an 11,000-triangle car) and wrong the moment the
+    /// car goes missing for any reason: the cache says "already showing that one" forever and
+    /// the podium stays empty until the scene reloads.
+    /// </remarks>
+    public bool HasCar => current != null;
+
+    /// <summary>What Show() was last asked for, so a missing car can be rebuilt.</summary>
+    GameObject lastPrefab;
+
+    /// <summary>
+    /// Set when a prefab cannot be shown at all, to stop the self-heal retrying it every frame.
+    /// </summary>
+    bool cannotShow;
     Material backdropMaterial;
     Transform backdrop;
     Transform limbo;
@@ -293,6 +311,10 @@ public class CarPodium : MonoBehaviour
         current = null;
         settle = 0f;
 
+        // Remembered so the self-heal in Update can put it back if it goes missing.
+        lastPrefab = prefab;
+        cannotShow = false;
+
         if (mount == null) return;
 
         if (prefab == null)
@@ -300,6 +322,7 @@ public class CarPodium : MonoBehaviour
             // Silent before, and it looks exactly like the spawn failing. A roster entry with no
             // prefab is a wiring mistake, so say which one.
             lastShown = "(null prefab)";
+            cannotShow = true;
             Debug.LogWarning("CarPodium: the selected car has no prefab assigned in the " +
                              "CarRoster, so the podium is empty.", this);
             return;
@@ -342,6 +365,7 @@ public class CarPodium : MonoBehaviour
         else
         {
             lastShown = prefab.name + " (NO MESHES)";
+            cannotShow = true;
             Debug.LogWarning("CarPodium: '" + prefab.name + "' has no meshes to show.", this);
         }
     }
@@ -494,6 +518,26 @@ public class CarPodium : MonoBehaviour
     void Update()
     {
         float dt = Time.unscaledDeltaTime;
+
+        // SELF-HEAL. An empty podium was reported as intermittent — sometimes no car at all,
+        // once a car that appeared and vanished a second later. Rather than chase every way an
+        // instance can go missing, the podium now notices and puts it back.
+        //
+        // Worth doing even once a specific cause is found, because the failure is silent and
+        // total: nothing errors, the plinth is simply bare, and MenuUI's prefab cache means it
+        // stays bare for the rest of the session. `Show` is only called when there is genuinely
+        // no car, so this cannot loop, and `cannotShow` stops it retrying a prefab that has no
+        // meshes or no prefab at all.
+        //
+        // It logs, because a self-heal that hides the problem is worse than the problem.
+        if (current == null && lastPrefab != null && !cannotShow
+            && mount != null && mount.gameObject.activeInHierarchy)
+        {
+            Debug.LogWarning($"CarPodium: '{lastPrefab.name}' went missing from the podium. " +
+                             "Rebuilding it. If this repeats, something is destroying the car " +
+                             "after it is placed.", this);
+            Show(lastPrefab);
+        }
 
         // Unscaled throughout: the menu runs at timeScale 0 whenever it is reached from a
         // paused run, and a podium that stops turning there looks broken.

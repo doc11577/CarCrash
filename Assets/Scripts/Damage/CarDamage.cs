@@ -110,12 +110,21 @@ public class CarDamage : MonoBehaviour
              "the car in one crash. Does not cap TotalDamage, which still scores the full hit.")]
     public float maxDamagePerImpact = 60f;
 
-    [Tooltip("Multiplies damage when the other thing is ANOTHER CAR. Environment damage is not " +
-             "affected. Two vehicles meeting is the moment this game is about, and at the shared " +
-             "rate a car-to-car hit read as no more eventful than brushing a rock. " +
-             "It applies to both cars, since each runs its own collision callback for the same " +
-             "impact — so a big hit is mutually destructive rather than one-sided.")]
-    public float carVsCarDamage = 3f;
+    [Tooltip("Multiplies how hard a car-to-car hit CRUMPLES the bodywork. Deformation only — the " +
+             "score and how readily panels come off are untouched, so turning this up makes " +
+             "hits look worse without making them worth more or stripping the car faster.\n\n" +
+             "This is the dial that makes two cars meeting read as an event. Environment " +
+             "damage is deliberately not affected. It applies to BOTH cars, since each runs " +
+             "its own collision callback for the same impact.")]
+    public float carVsCarCrumple = 3f;
+
+    [Tooltip("Multiplies the DAMAGE NUMBER of a car-to-car hit — the score it pays and the " +
+             "health it takes off a panel. Left at 1 on purpose: car-to-car hits already pay " +
+             "at their own rate (RunScore.gearsPerPvpDamage) and amplifying here as well " +
+             "double-counts. Raise it only if panels should come off more readily in a " +
+             "collision than against scenery; for a hit that merely LOOKS bigger, use " +
+             "carVsCarCrumple instead.")]
+    public float carVsCarDamage = 1f;
 
     [Tooltip("How far from a contact point a part can be and still take the hit, in metres.")]
     public float partReach = 1.6f;
@@ -163,7 +172,19 @@ public class CarDamage : MonoBehaviour
     public event Action<CarDamage, float, Vector3, bool, bool> Damaged;
 
     /// <summary>Raised when a part comes off, with the part that went.</summary>
-    public event Action<Part> PartLost;
+    /// <summary>
+    /// A part came off. Carries WHOSE car shed it and WHO caused it, for the same reason
+    /// <see cref="Damaged"/> does.
+    /// </summary>
+    /// <remarks>
+    /// It used to carry only the part, which meant a listener could not tell a panel the player
+    /// knocked off from one a traffic car lost hitting a rock by itself — so with
+    /// `scoreTrafficDamage` on, every AI wreck paid the player and spammed a popup. Worst on
+    /// Everest, where obstacle avoidance is off by design and the field destroys itself on the
+    /// rocks. `Damaged` had already been given source and byPlayer for exactly this; this event
+    /// was simply missed at the time.
+    /// </remarks>
+    public event Action<CarDamage, Part, bool> PartLost;
 
     /// <summary>Total damage this car has taken. The basis for the gear payout.</summary>
     public float TotalDamage { get; private set; }
@@ -292,7 +313,13 @@ public class CarDamage : MonoBehaviour
         if (deformation != null)
         {
             int spread = GatherContacts(collision);
-            deformation.Dent(dentPoints, spread, collision.impulse, damage);
+
+            // Car-on-car crumples harder than car-on-scenery, and ONLY here. Amplifying the
+            // damage number instead would inflate the score and strip panels off faster, which
+            // is not what "make hits look better" asks for -- the ask is visual, so the
+            // multiplier is applied to the visual.
+            float crumple = other != null ? damage * carVsCarCrumple : damage;
+            deformation.Dent(dentPoints, spread, collision.impulse, crumple);
         }
 
         Part hit = NearestPart(contact);
@@ -307,7 +334,7 @@ public class CarDamage : MonoBehaviour
         // TotalDamage above is deliberately NOT capped: the score should still reflect how
         // hard the hit was, even though no single panel takes all of it.
         hit.health -= Mathf.Min(damage, maxDamagePerImpact);
-        if (hit.health <= 0f) Detach(hit, contact);
+        if (hit.health <= 0f) Detach(hit, contact, byPlayer);
     }
 
     [Tooltip("Damage multiplier for SUSTAINED contact -- sliding on the roof, grinding a wall -- " +
@@ -467,7 +494,7 @@ public class CarDamage : MonoBehaviour
         }
     }
 
-    void Detach(Part part, Vector3 contact)
+    void Detach(Part part, Vector3 contact, bool byPlayer)
     {
         part.detached = true;
 
@@ -481,7 +508,7 @@ public class CarDamage : MonoBehaviour
         if (part.visual != null) ThrowRealPart(part);
         else ThrowDebrisProp(part);
 
-        PartLost?.Invoke(part);
+        PartLost?.Invoke(this, part, byPlayer);
     }
 
     /// <summary>

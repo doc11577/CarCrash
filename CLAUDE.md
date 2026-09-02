@@ -311,6 +311,80 @@ Sketch of the work: a chunking step in `publish.sh` that cuts any `prod/` file o
 `embed.html` already has the bar and the on-screen error pane, so it is a modest change to a
 file that is already hand-written for this job.
 
+### Four bugs from one play session — 2026-09-02
+
+Reported together, and two of them turned out to be the same bug.
+
+#### Traffic self-damage paid the player, AND that is why WRECKER never appeared
+
+`CarDamage.PartLost` carried only the part — **no source, no `byPlayer`**. `Damaged` had been
+given both when car-on-car scoring went in; this event was simply missed. So with
+`scoreTrafficDamage` on, every traffic car that wrecked itself on a rock paid the player and
+threw a popup.
+
+**The second symptom followed from the first, and that is the part worth remembering.** There are
+only **eight popup slots**, recycled round-robin. Traffic destroying itself filled all eight
+continuously, so the WRECKER popup — which was firing correctly the whole time — was recycled
+before it could be read. **"PvP is not working" and "I get popups for cars I never touched" were
+one fault, not two.** Worst on Everest, because `obstacleAvoidance` is 0 there by design and the
+field ploughs straight into the scenery, which is why it looked map-specific.
+
+`PartLost` now carries `(CarDamage source, Part part, bool byPlayer)` and `RunScore.OnPartLost`
+applies the same rule `OnDamaged` always did: your own parts always pay, someone else's only when
+you knocked them off — at the PvP rate, and with a WRECKER caption in `pvpColour`.
+
+**A popup budget is a scoring rule in disguise.** Anything that can fire faster than eight
+concurrent popups will silently starve everything else on screen.
+
+#### Car-on-car should CRUMPLE 3x, not SCORE 3x
+
+`carVsCarDamage` multiplied the damage number, which drives the score *and* panel health *and*
+deformation together. The ask was visual — hits that look worth watching — so the multiplier now
+applies to the dent alone:
+
+| Field | Value | What it multiplies |
+| --- | --- | --- |
+| `carVsCarCrumple` | **3** | deformation on a car-to-car hit, nothing else |
+| `carVsCarDamage` | **1** | the damage NUMBER: score and panel health |
+
+`carVsCarDamage` was 3 on all four player prefabs and is now 1 — **edited in the prefabs, since a
+changed code default does not touch a serialized component.** It stays as a field because
+"panels come off more readily in a collision" is a real thing to want; it is just not what was
+asked for, and amplifying it double-counts against `gearsPerPvpDamage`.
+
+#### The airtime timer restarted mid-flight
+
+It ended the jump on the FIRST frame of contact, so a single graze — a wingtip on a rock face
+mid-flight — banked the jump and restarted the counter from zero while the car was still in the
+air. On Everest, a jagged 70-degree face, that happens constantly.
+
+`landingGrace` (0.2 s) requires contact to PERSIST before it counts as landing. A graze is contact
+for a frame or two; a landing is contact that stays.
+
+**Two serialized values were also wrong, and one of them contradicted this file.** `minAirTime`
+was **0.45 in every scene** while CLAUDE.md has said 0.8 since 2026-09-01 — the exact
+"changing a default in C# does not change the scene" trap documented above, sitting undetected in
+four scenes. Now 0.8 everywhere. `maxAirTime` was 9 on three maps, which caps the payout at
+`9 x 26 = 234` gears — the number that was seen freezing. Raised to 20 on those three; **Quarry
+is left at 200**, which was set by hand.
+
+#### The podium sometimes showed no car, and it never recovered
+
+Made concrete rather than diagnosed, because the failure is silent and total — nothing errors,
+the plinth is simply bare.
+
+The reason an empty podium STAYED empty is `MenuUI.shownPrefab`: it caches the prefab last shown
+and skips the rebuild when it has not changed. Correct for the common case (a price label must
+not respawn an 11,000-triangle car) and wrong the moment the car goes missing, because the cache
+then says "already showing that one" for the rest of the session.
+
+- `CarPodium.HasCar` — callers can ask instead of assuming.
+- `RefreshCars` rebuilds when the prefab changed **or there is no car**, so any cause recovers on
+  the next arrow press, page visit or purchase.
+- `CarPodium.Update` self-heals: if the mount is visible and the car is gone, it rebuilds the
+  remembered prefab **and logs a warning**. `cannotShow` stops it retrying a prefab with no
+  meshes. A self-heal that hides the problem is worse than the problem, so it is loud.
+
 ### Unused-asset cleanup — 2026-09-02, and the check that made it safe
 
 Removed 89 files: the whole **CosmoCars** pack (12 vehicles + `coupe-split.fbx`, superseded by
@@ -1958,10 +2032,16 @@ Other decisions:
   wrecking traffic is a deliberate act where taking damage yourself is mostly just what happens.
   The popup reads WRECKER and is its own colour, so the two are told apart on screen.
 
-- **`carVsCarDamage` (3x) amplifies car-on-car impacts only.** Environment damage is untouched.
-  Two vehicles meeting is the moment this game is about, and at the shared rate it read as no
-  more eventful than brushing a rock. It applies to BOTH cars, since each runs its own collision
-  callback for the same impact — so a big hit is mutually destructive rather than one-sided.
+- **`carVsCarCrumple` (3x) amplifies car-on-car impacts only — DEFORMATION only.** Environment
+  damage is untouched. Two vehicles meeting is the moment this game is about, and at the shared
+  rate it read as no more eventful than brushing a rock. It applies to BOTH cars, since each runs
+  its own collision callback for the same impact — so a big hit is mutually destructive rather
+  than one-sided.
+
+  **It was `carVsCarDamage` at 3x until 2026-09-02, and that multiplied the wrong thing** — the
+  damage NUMBER, which drives the score and panel health as well as the dent. The ask was for
+  hits that LOOK better, so the multiplier moved to the dent and `carVsCarDamage` went to 1. See
+  the bug section above.
 
 #### Making them fast — lookahead is TIME, not distance
 
@@ -2795,11 +2875,20 @@ Time off the ground earns gears, and the counter climbs live while the car is in
   doubt and banks at the moment the risk resolves.
 - **`minAirTime` (0.8 s) is what separates a jump from a bump.** The wheels leave the ground over
   every crest and kerb on these courses, so without a floor the counter flickers the entire way
-  down the hill. 0.45 was not enough on rough ground.
+  down the hill. 0.45 was not enough on rough ground — and **0.45 was still what all four scenes
+  actually held until 2026-09-02**, because raising the code default never touched them. Fixed.
 - **It ends on `Touching`, not `Grounded`** — see the air-rotation section. Landing upside down is
   landing.
-- **`maxAirTime` (9 s) exists because "not grounded" is also true** of a car wedged on a rock,
-  resting on its roof, or falling out of the world. Without a cap those pay unboundedly.
+- **`landingGrace` (0.2 s) is what makes it ONE timer until you land.** Ending the jump on the
+  first frame of contact meant a single graze mid-flight banked the jump and restarted the
+  counter from zero while the car was still in the air — reported on Everest, which is a jagged
+  70-degree face and grazes constantly. Contact must PERSIST to count as a landing: a graze is
+  contact for a frame or two, a landing is contact that stays. Too high and a real landing that
+  bounces reads as one long jump.
+- **`maxAirTime` (20 s) exists because "not grounded" is also true** of a car wedged on a rock,
+  resting on its roof, or falling out of the world. Without a cap those pay unboundedly. It caps
+  the PAYOUT, not the timer — at `gearsPerAirSecond` 26 the old 9 s froze the counter at 234
+  gears, which is the number that was seen sticking. Quarry is at 200 by hand; the rest are 20.
 - **The live counter is on the DYNAMIC canvas.** It changes every frame while airborne, and a
   uGUI canvas rebuilds its whole batch when anything on it changes — putting it beside the gear
   counter would rebuild the counter every frame of every jump.
