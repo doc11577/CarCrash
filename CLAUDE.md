@@ -181,9 +181,10 @@ passes brought it down:
 | 1 | 21 dam textures 2048 → 512, crunch on | 21.90 MB |
 | 2 | `glendam.fbx` mesh compression Medium, animation/blendshapes/cameras/lights off; crunch on the last 15 uncrunched textures across all vehicles, Everest and Quarry | **18.20 MB** |
 
-**Headroom is 1.80 MB, and every texture in the project is now crunched**, so the cheap wins are
-spent. The next reduction is the **TMP font trim (~2.1 MB)**, still undone and now the only
-large lever left that costs nothing on screen. Do it before the next map.
+**Headroom is 1.80 MB, and every texture in the project is now crunched.** The **TMP font trim
+landed 2026-09-02** and takes roughly 1.5 MB more off the next build, which is not reflected in
+the table above — that was measured before it. The cheap wins are now spent; the next lever is
+splitting the files, which retires the cap outright.
 
 **Mesh compression is ON for The Dam and nothing else.** It quantises vertex positions, and that
 map's colliders were already troublesome, so if the road there ever feels bumpy or the wheels
@@ -354,55 +355,59 @@ What was deliberately KEPT:
 it is wired, and no scene's `TrafficSpawner.carPrefabs` lists it — so the Aventador never appears
 in traffic on any map. Left alone because that is a design call, not a cleanup one.
 
-### The TMP font trim — the character set is DERIVED, do not guess it
+### The TMP font is TRIMMED — done 2026-09-02, ~1.5 MB off every download
 
-**`LiberationSans SDF.asset` is 2.15 MB and ships in every build** whether or not anything uses
-it, because everything under a `Resources/` folder is force-included. The game draws digits, a
-few words and some part names. A trimmed asset is roughly 100 KB.
+`LiberationSans SDF.asset` was 2.15 MB and shipped in every build whether or not anything used
+it, because **everything under a `Resources/` folder is force-included**. It is gone, replaced by
+`Assets/TextMesh Pro/Fonts/GameFontSDF.asset` — **654 KB, 250 glyphs, 512 × 512 atlas, Static
+population mode.** TMP Resources went 2.19 MB → 0.02 MB; the new asset ships because TMP Settings
+references it, so the **net saving is about 1.5 MB.**
 
-**The whole game needs ASCII plus TWO other characters. Measured 2026-09-02, not estimated** —
-every string literal in the UI scripts, plus `CarRoster.asset` and all five scenes, was scanned
-for anything above U+007F:
+**The character set is DERIVED, and re-derive it before adding UI text.** Every string literal in
+the UI scripts, plus `CarRoster.asset` and all five scenes, was scanned for codepoints above
+U+007F. The entire game needs ASCII plus exactly two characters:
 
 | Character | Codepoint | Where |
 | --- | --- | --- |
 | `·` | **U+00B7** | separators — "0 gears banked · best run 0", the patch-note bullets |
 | `—` | **U+2014** | em dash — "New map — Bullseye", most menu subtitles |
 
-Everything else in the roster, the scenes and the UI is plain ASCII. **Font Asset Creator custom
-range: `32-126,183,8212`.**
+**Font Asset Creator custom range: `32-126,183,8212`.** Both were verified present in the shipped
+asset, along with all 95 ASCII codepoints, before the stock font was deleted.
 
-**It is one menu item: `Assets/Editor/FontTrim.cs` → CarCrash → Trim TMP Font.** Written
-2026-09-02 rather than leaving nine Font Asset Creator steps, because the three parts have to
-happen TOGETHER — generating, retargeting TMP Settings, and deleting the stock asset. Delete
-first and the project has no default font, which **does not error**: every label simply renders
-as nothing. The script generates, verifies the glyph table is non-empty, retargets, and only then
-deletes; any failure returns early with the stock asset untouched and says so.
+**A missing glyph renders as a BLANK BOX, not as an error.** Any new UI string with a `°`, `×`,
+`→`, an accented letter or a curly quote adds a codepoint the atlas has not got, and nothing
+anywhere will say so. Re-scan before assuming the range still holds:
 
-What it does, so the numbers can be checked rather than trusted:
+```bash
+# every non-ASCII codepoint in the UI scripts
+perl -ne 'for (split //) { $s{$_}++ if ord > 127 } END { printf("%s U+%04X\n", $_, ord) for sort keys %s }' \
+  Assets/Scripts/Menu/*.cs Assets/Scripts/Game/*.cs
+```
 
-| Setting | Value | Why |
-| --- | --- | --- |
-| Source | `Assets/TextMesh Pro/Fonts/LiberationSans.ttf` | the same face, so nothing changes on screen |
-| Character set | ASCII `32-126` + U+00B7 + U+2014 | measured, see the table above |
-| Atlas | **512 × 512**, SDFAA, padding 5 | the atlas IS the megabytes; ample for ~97 glyphs |
-| Output | `Assets/Art/Fonts/GameFont SDF.asset` | **outside `Resources/`** — that is the whole point |
-| Population mode | **Static** | Dynamic keeps a live link to the TTF and drags it into the build |
-| Multi-atlas | off | a second atlas page would silently undo the saving |
+**What had to happen together, and why the order matters.** Generating, retargeting and deleting
+are one operation. Delete the stock asset before the replacement is assigned and the project has
+no default font — which **does not error**, it renders every label as nothing. The safe order:
 
-The atlas texture and material are nested into the asset with `AddObjectToAsset`; without that
-they are lost on reload and every label renders as solid blocks. `TMP Settings.m_defaultFontAsset`
-is private, so retargeting goes through `SerializedObject` rather than a setter that does not
-exist.
+1. Generate the asset **outside any `Resources/` folder** (the whole point — referenced assets
+   ship, unreferenced ones in `Resources/` ship anyway, which is the waste).
+2. Verify the glyph table: full ASCII plus 183 and 8212.
+3. Point `TMP Settings.m_defaultFontAsset` at it. The field is private, so from a script it needs
+   `SerializedObject`; by hand it is the Default Font Asset slot on the TMP Settings asset.
+4. Only then delete `LiberationSans SDF.asset`, its `- Fallback`, and the `- Drop Shadow` and
+   `- Outline` materials — all four are in `Resources/` and the last two reference the atlas
+   inside the asset, so leaving them behind leaves broken material references in the build.
 
+**Nothing outside TMP's own folder referenced the stock font** — checked by GUID across every
+scene, prefab, material and asset — so step 3 was the entire rewiring. The HUD and menu are built
+in code and take `TMP_Settings.defaultFontAsset` implicitly, which is why no scene needed
+touching.
 
-**Nothing but TMP's own settings references the stock asset** — checked by GUID across every
-scene, prefab and asset, 2026-09-02 — so step 8 is genuinely all the rewiring there is. The HUD
-and menu are built in code and take `TMP_Settings.defaultFontAsset` implicitly.
+An `Assets/Editor/FontTrim.cs` was written to do all four steps as one menu item, then **deleted
+unused** — Ethan had already generated the asset by hand in Font Asset Creator while it was being
+written. Kept out of the repo rather than left lying around: a script that regenerates a font
+nobody needs is a trap for whoever runs it next. The steps above are what it did.
 
-**If a character goes missing it renders as a blank box, not as an error.** Re-run the scan
-before assuming the range is still right — any new UI string with a `°`, `×`, `→` or a curly
-quote adds a codepoint, and the failure is silent.
 
 ### Web player settings (verified on disk)
 
@@ -451,10 +456,12 @@ metas carry `isReadable: 1`, which deformation requires.
 
 ### Size, in proportion
 
-18.20 MB of a 20 MB per-file cap, 1.78 MB of headroom — **but the cap is about to stop
-mattering**, see above. What does not stop mattering is download TIME on school Wi-Fi, so the
-**TMP font trim (~2.1 MB, ~20 minutes, nothing on screen changes)** is still worth doing. It is
-no longer urgent, just cheap.
+The last build measured 18.20 MB of a 20 MB per-file cap, **but the cap is about to stop
+mattering** (see above) and **the TMP font trim has since landed** — 2.15 MB of stock font
+replaced by 654 KB, roughly 1.5 MB off the download. The next build should come in near
+16.7 MB without any content changing. What still matters is download TIME on school Wi-Fi, and
+the cheap wins there are now spent: every texture is crunched, nothing is over 1024, and the
+font is trimmed.
 
 Every texture in the project is now crunched and none is over 1024, so that well is dry.
 
@@ -656,10 +663,9 @@ Build order — expensive unknowns first, content last:
    content for two releases and has twice produced a build that would not have loaded at all.
    Roughly an hour, in two files that are already hand-written for this job. Keep the commit pin.
 
-   **Then trim the TMP font** — ~2.2 MB down to ~100 KB, twenty minutes, nothing on screen
-   changes. Window → TextMeshPro → Font Asset Creator, custom character set, delete the stock
-   asset. No longer urgent once splitting lands, because the cap stops being a wall; still worth
-   it, because **download TIME on school Wi-Fi is unaffected by splitting** and 2 MB is 2 MB.
+   **The TMP font trim is DONE** — 2026-09-02, 2.15 MB stock asset replaced by a 654 KB
+   250-glyph one, about 1.5 MB off every download. See the font section for the derived
+   character range and why a missing glyph fails silently.
 
    The frame-rate question that used to sit here is **answered**: 60 FPS on a real school
    Chromebook, 2026-08-31. See the measured section above. Re-measure after anything that
@@ -929,7 +935,6 @@ stays over it.** Argue new content down on download time and rigidbody count, no
 | `Game/DevMode.cs` | Code-gated dev mode: gears, car tuner, perf readout. |
 | `Menu/Fullscreen.cs` | **Unused since 2026-09-02.** Fullscreen cannot work inside Google Sites' nested iframes; every button was removed. Kept only to document that. |
 | `Debug/PerfReadout.cs` | On-screen FPS/device readout. Only drawn in dev mode. |
-| `Editor/FontTrim.cs` | **Editor-only.** CarCrash → Trim TMP Font: generates the trimmed font, retargets TMP Settings, deletes the 2.15 MB stock asset. Atomic — see the font section. |
 
 ### Changing a default in C# does NOT change a component already in the scene
 
