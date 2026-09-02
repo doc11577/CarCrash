@@ -205,8 +205,9 @@ MonoBehaviour:
   - {fileID: 3685487752650632557, guid: 6bbf3141222c12f45a44e6848bc08afa, type: 3}
   - {fileID: 945304933842755612, guid: 1dfbb993b6e6361418a4f3dbea5020ab, type: 3}
   - {fileID: 521731838676468038, guid: f033b7f0444007643b984c2097c88c4b, type: 3}
+  - {fileID: 2068478204062595931, guid: 8c0ba727959733849b04b7a5c5865d5b, type: 3}
   mixSeed: 0
-  count: 3
+  count: 7
   grid: {fileID: 1991054188}
   lateralSpacing: 7
   rowSpacing: 8
@@ -218,6 +219,7 @@ MonoBehaviour:
   - {r: 0.15, g: 0.55, b: 0.25, a: 1}
   - {r: 0.85, g: 0.62, b: 0.1, a: 1}
   - {r: 0.35, g: 0.13, b: 0.55, a: 1}
+  obstacleAvoidance: 0
   scoreTrafficDamage: 1
   spawned: 0
 --- !u!114 &1493329991

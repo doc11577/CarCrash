@@ -372,22 +372,29 @@ for anything above U+007F:
 Everything else in the roster, the scenes and the UI is plain ASCII. **Font Asset Creator custom
 range: `32-126,183,8212`.**
 
-Steps, once:
+**It is one menu item: `Assets/Editor/FontTrim.cs` → CarCrash → Trim TMP Font.** Written
+2026-09-02 rather than leaving nine Font Asset Creator steps, because the three parts have to
+happen TOGETHER — generating, retargeting TMP Settings, and deleting the stock asset. Delete
+first and the project has no default font, which **does not error**: every label simply renders
+as nothing. The script generates, verifies the glyph table is non-empty, retargets, and only then
+deletes; any failure returns early with the stock asset untouched and says so.
 
-1. **Window → TextMesh Pro → Font Asset Creator.**
-2. **Source Font File:** `Assets/TextMesh Pro/Fonts/LiberationSans.ttf`.
-3. **Sampling Point Size:** Auto Sizing. **Padding:** 5. **Packing Method:** Optimum.
-4. **Atlas Resolution:** 512 × 512 — ample for ~97 glyphs, and it is the atlas that costs the MB.
-5. **Character Set:** Custom Range. **Sequence:** `32-126,183,8212`.
-6. **Render Mode:** SDFAA. **Get Kerning Pairs:** off.
-7. **Generate Font Atlas**, then **Save as** → `Assets/Art/Fonts/GameFont SDF.asset`.
-   **Save it OUTSIDE any `Resources/` folder** — the point is to stop force-inclusion. Referenced
-   assets still ship; it is unreferenced ones in `Resources/` that are the waste.
-8. **Select `Assets/TextMesh Pro/Resources/TMP Settings.asset`** and set **Default Font Asset**
-   to the new `GameFont SDF`.
-9. **Delete `Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset`** and its
-   `- Fallback` sibling.
-10. Play the menu. Every label should look identical.
+What it does, so the numbers can be checked rather than trusted:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Source | `Assets/TextMesh Pro/Fonts/LiberationSans.ttf` | the same face, so nothing changes on screen |
+| Character set | ASCII `32-126` + U+00B7 + U+2014 | measured, see the table above |
+| Atlas | **512 × 512**, SDFAA, padding 5 | the atlas IS the megabytes; ample for ~97 glyphs |
+| Output | `Assets/Art/Fonts/GameFont SDF.asset` | **outside `Resources/`** — that is the whole point |
+| Population mode | **Static** | Dynamic keeps a live link to the TTF and drags it into the build |
+| Multi-atlas | off | a second atlas page would silently undo the saving |
+
+The atlas texture and material are nested into the asset with `AddObjectToAsset`; without that
+they are lost on reload and every label renders as solid blocks. `TMP Settings.m_defaultFontAsset`
+is private, so retargeting goes through `SerializedObject` rather than a setter that does not
+exist.
+
 
 **Nothing but TMP's own settings references the stock asset** — checked by GUID across every
 scene, prefab and asset, 2026-09-02 — so step 8 is genuinely all the rewiring there is. The HUD
@@ -466,6 +473,25 @@ dotnet "$UD/DotNetSdkRoslyn/csc.dll" @args.rsp
 ```
 
 Needs `Library/ScriptAssemblies/` to exist, so the project must have been opened at least once.
+
+**Editor scripts need a DIFFERENT reference set, and mixing the two produces pages of errors
+that are all artifacts.** Anything under `Assets/Editor/` compiles against the modular runtime
+assemblies **plus the modular EDITOR assemblies**, and against neither facade:
+
+```bash
+#   -r: every $UD/Managed/UnityEngine/UnityEngine*Module.dll     (as above)
+#   -r: every $UD/Managed/UnityEngine/UnityEditor*Module.dll     (the extra bit)
+#   -r: Library/ScriptAssemblies/Unity.TextMeshPro.dll
+#   -r: $UD/NetStandard/ref/2.1.0/netstandard.dll
+#   then Assets/Editor/*.cs -- and ONLY those, not the game scripts
+```
+
+**Do not add `Managed/UnityEngine.dll` or `Managed/UnityEditor.dll`.** They are monolithic
+facades that redeclare what the modules already define, and Roslyn reports every use as
+`CS0433: the type exists in both`. Adding `UnityEditor.dll` alone instead fails the other way —
+it references `UnityEngine.dll` by name, so every `UnityEngine.Object` becomes
+`CS0012: defined in an assembly that is not referenced`. Both look like real bugs in the script
+and neither is. Compile Editor scripts SEPARATELY from the game scripts for the same reason.
 Catches syntax, signature and obsolete-API errors in seconds. It cannot catch anything about
 behaviour, serialization or the Inspector.
 
@@ -903,6 +929,7 @@ stays over it.** Argue new content down on download time and rigidbody count, no
 | `Game/DevMode.cs` | Code-gated dev mode: gears, car tuner, perf readout. |
 | `Menu/Fullscreen.cs` | **Unused since 2026-09-02.** Fullscreen cannot work inside Google Sites' nested iframes; every button was removed. Kept only to document that. |
 | `Debug/PerfReadout.cs` | On-screen FPS/device readout. Only drawn in dev mode. |
+| `Editor/FontTrim.cs` | **Editor-only.** CarCrash → Trim TMP Font: generates the trimmed font, retargets TMP Settings, deletes the 2.15 MB stock asset. Atomic — see the font section. |
 
 ### Changing a default in C# does NOT change a component already in the scene
 
