@@ -261,6 +261,55 @@ Known and deliberately NOT changed at the same time: `glendam.fbx` is a 47 MB so
 already troublesome, so it is left alone — a lever to reach for only if textures alone do not get
 under the cap.
 
+### THE 20 MB CAP CAN BE DEFEATED BY SPLITTING THE FILE — found 2026-09-02
+
+**jsDelivr's 20 MB limit is PER FILE, and a file can be cut into pieces that are reassembled in
+the browser.** Found by reading the page source of another Unity game on a Google Site
+(ZooPickle's Ultrakill 3D), which had been offered as evidence that "bigger games fit". It is on
+**the same CDN and the same kind of public GitHub repo this project uses** — it just does not
+serve its data file whole:
+
+```js
+const dataParts = 4;
+const wasmParts = 3;
+
+async function mergeParts(baseName, totalParts, progressWeight) {
+  const parts = [];
+  for (let i = 0; i < totalParts; i++) {
+    const url = `https://cdn.jsdelivr.net/gh/<user>/<repo>@main/Build/${baseName}.part${i}`;
+    parts.push(await (await fetch(url)).arrayBuffer());
+    progressBar.style.width = ((i + 1) / totalParts) * progressWeight + "%";
+  }
+  return URL.createObjectURL(new Blob(parts, { type: "application/octet-stream" }));
+}
+```
+
+The merged `blob:` URL is then passed to `createUnityInstance` as `dataUrl` / `codeUrl`. Every
+part on the CDN is comfortably under the cap, so the CDN never sees a file it will refuse.
+
+**What this changes: the per-file cap stops being the binding constraint on content.** The
+build-size sections above are written on the assumption that 20 MB is a wall. It is not — it is
+a chunk size.
+
+What it does NOT change, and these are the real limits now:
+
+- **Download TIME.** 25 MB is 25 MB whether it arrives as one file or four, and school Wi-Fi is
+  the same either way. The TMP font trim and sane import settings are still worth doing.
+- **Streaming is lost.** Unity currently streams its own download and reports progress. Merging
+  means every part must land before Unity starts, and the loading bar has to be driven from the
+  fetch loop instead (which is what their code does).
+- **The whole file is held as a Blob** before Unity reads it. At this size that is fine — the
+  heap measured 154 MB of 512 — but it is not free, and it scales with the file.
+
+**If this is implemented here, keep the commit pin.** That page uses `@main`, which is exactly
+what the deploy section warns against: branch URLs are cached hard and serve stale builds for
+hours. Splitting and pinning are independent — do both.
+
+Sketch of the work: a chunking step in `publish.sh` that cuts any `prod/` file over ~18 MB into
+`name.partN`, and a `mergeParts` loop in `tools/embed.html` feeding the existing progress bar.
+`embed.html` already has the bar and the on-screen error pane, so it is a modest change to a
+file that is already hand-written for this job.
+
 ### Web player settings (verified on disk)
 
 `webGLDecompressionFallback: 1`, `webGLMaximumMemorySize: 512`, `webWasm2023: 1`,
@@ -274,29 +323,46 @@ off — threads need COOP/COEP headers Google Sites will never send), `webGLData
 Untested lever if the Chromebook is slow: capping `devicePixelRatio` to 1. HiDPI Chromebooks
 render far more pixels than the GPU can afford. Measure before reaching for it.
 
-## NEXT SESSION — pick up here (updated 2026-08-31, Update 1 shipped)
+## NEXT SESSION — pick up here (updated 2026-09-02, Update 2 shipped)
 
-**Update 1 is BUILT, PUSHED AND LIVE on Google Sites** — commit `1380215`, embed pinned by
-`2852448`, 21.63 MB. Confirmed working on the live build: two maps, three cars, the truck in
-traffic, feats, the patch-notes panel and RESET PROGRESS.
+**Update 2 is BUILT, PUSHED AND LIVE on Google Sites** — commit `b888188`, embed pinned by
+`6d2aa86`, **25.04 MB total, 18.20 MB in the data file.** Four maps (Quarry01, Everest,
+Bullseye, The Dam), four cars (E30, P72, LCT 3000 truck, Aventador), falling boulders, airtime
+scoring, the podium garage, save codes, the turn-assist handling fix, and a dev tuner that takes
+typed values and remembers them per car.
 
-Two maps (Quarry01, Everest), three cars (E30, P72, LCT 3000 truck), traffic mixed at random
-from the whole roster, scoring with combo and feats, the garage, dev mode and fullscreen. What
-follows is only what is still open.
+### DO THIS FIRST NEXT TIME: split the build files
+
+**Agreed 2026-09-02 and deferred deliberately — it is the first thing to build next session.**
+
+`publish.sh` should cut any `prod/` file over ~18 MB into `name.partN`, and `tools/embed.html`
+should fetch the parts, merge them into a Blob and hand Unity the `blob:` URL. **See "THE 20 MB
+CAP CAN BE DEFEATED BY SPLITTING THE FILE" in the build-size section for the working code**,
+read off another Unity game running from the same CDN on a Google Site.
+
+Why it goes first: **it retires the constraint that has shaped every content decision in this
+project.** Two releases in a row have been fights with the per-file cap — Update 2's first build
+came out at 35.32 MB and would not have loaded at all. Splitting makes that class of failure
+impossible, and it does it without moving off jsDelivr, which is the one host known to get
+through the school filter.
+
+Keep the commit pin when doing it. The game that revealed the technique serves from `@main`,
+which is the stale-cache trap documented in the deploy section.
 
 ### State on disk
 
-**Everything is committed and pushed as of 2026-08-31, working tree clean at `2852448`.**
-`1380215` is Update 1 in full — Everest, the truck, the AI work, feats, the menu changes and the
-release tooling. Both split FBX metas carry `isReadable: 1`, which deformation requires.
+**Everything is committed as of 2026-09-02.** `b888188` is Update 2 in full; `6d2aa86` pins the
+embed to it and may still be unpushed — check `git log origin/master..HEAD`. Both split FBX
+metas carry `isReadable: 1`, which deformation requires.
 
-### The one thing that will bite next
+### Size, in proportion
 
-**The download is 21.63 MB and `carcrash.data.unityweb` is 14.83 MB against jsDelivr's hard
-20 MB per-file cap.** Roughly 5.2 MB of headroom, and Everest alone cost about 5. **Trim the TMP
-font (~2.1 MB, ~20 minutes) before adding another map** — see the build-size section. If the cap
-is exceeded the CDN 404s the file and the game does not load at all, which is a much worse
-failure than anything on the open list below.
+18.20 MB of a 20 MB per-file cap, 1.78 MB of headroom — **but the cap is about to stop
+mattering**, see above. What does not stop mattering is download TIME on school Wi-Fi, so the
+**TMP font trim (~2.1 MB, ~20 minutes, nothing on screen changes)** is still worth doing. It is
+no longer urgent, just cheap.
+
+Every texture in the project is now crunched and none is over 1024, so that well is dry.
 
 #### Compile-checking without opening Unity
 
@@ -463,28 +529,36 @@ Build order — expensive unknowns first, content last:
    · **the truck in the traffic mix** · **patch notes and RESET PROGRESS on the front end**
    · **release tooling that catches a stale build and an unpinned hash**
    · **UPDATE 1 shipped to Google Sites, 21.63 MB, commit `1380215`**
+   · **falling boulders on Quarry** · **airtime scoring** · **air rotation and the airborne camera**
+   · **Bullseye, the ramp-and-target map** · **The Dam, the first imported map**
+   · **the Aventador, the fourth car** · **the podium garage with its animated backdrop**
+   · **save codes** · **an MPH speedometer** · **turn assist with an understeer gradient**
+   · **points for wrecking other cars** · **a dev tuner that takes typed values and saves them**
+   · **UPDATE 2 shipped to Google Sites, 25.04 MB, commit `b888188`**
 
-2. **Now — TRIM THE TMP FONT.** ~2.2 MB down to ~100 KB, roughly twenty minutes, and **nothing
-   on screen changes.** It is first not because it is interesting but because
-   `carcrash.data.unityweb` is **14.83 MB against jsDelivr's hard 20 MB per-file cap** and the
-   next map breaks it. Exceeding the cap 404s the file and the game does not load at all — a
-   worse failure than anything else on this list, and one that would land the moment content
-   ships rather than when it is written. Window → TextMeshPro → Font Asset Creator, custom
-   character set, delete the stock asset.
+2. **Now — SPLIT THE BUILD FILES.** Cut any `prod/` file over ~18 MB into `name.partN` in
+   `publish.sh`, fetch and Blob-merge them in `tools/embed.html`, hand Unity the `blob:` URL.
+   Working code is in the build-size section under "THE 20 MB CAP CAN BE DEFEATED BY SPLITTING
+   THE FILE". **This retires the per-file cap**, which has been the binding constraint on
+   content for two releases and has twice produced a build that would not have loaded at all.
+   Roughly an hour, in two files that are already hand-written for this job. Keep the commit pin.
+
+   **Then trim the TMP font** — ~2.2 MB down to ~100 KB, twenty minutes, nothing on screen
+   changes. Window → TextMeshPro → Font Asset Creator, custom character set, delete the stock
+   asset. No longer urgent once splitting lands, because the cap stops being a wall; still worth
+   it, because **download TIME on school Wi-Fi is unaffected by splitting** and 2 MB is 2 MB.
 
    The frame-rate question that used to sit here is **answered**: 60 FPS on a real school
    Chromebook, 2026-08-31. See the measured section above. Re-measure after anything that
-   changes scene scale, but it is no longer a blocker.
-
+   changes scene scale — including the boulders, which postdate that measurement — but it is no
+   longer a blocker.
 3. **Next** — in rough order:
-   - **Re-tune damage and scoring now there are three cars and two maps**, and decide whether
+   - **Re-tune damage and scoring now there are FOUR cars and FOUR maps**, and decide whether
      hitting traffic should pay (`TrafficSpawner.scoreTrafficDamage`, still off). Sanity-check
-     the P72's 50,000 and the truck's 20,000 against a real run.
-   - **A third map**, but only after the font trim — see above. Pick numbers that change how it
+     the P72's 50,000, the truck's 20,000 and the Aventador's 100,000 against a real run.
+   - **A fifth map.** Pick numbers that change how it
      DRIVES, not just how it looks: corridor width and curviness do that, a new seed alone does
      not. Everest proved the point by initially reading as Quarry with different textures.
-   - **Falling rocks on Quarry** — Ethan's, recorded under *Ideas for later* with the three
-     things to settle first.
    - **Panel seams on the P72.** Region boxes cut straight lines through a curved body; fixing
      it properly needs carving that snaps to edge loops. The truck showed the better answer for
      any future car — `--keep` an artist's own cuts and never carve at all.
@@ -692,13 +766,19 @@ no post FX until measured.
 
 | Line | Budget | Actual | Status |
 | --- | --- | --- | --- |
-| Download | ≤ 20 MB | **21.63 MB** | over; per-file cap (20 MB) is the hard one at 14.83 MB |
+| Download | ≤ 20 MB | **25.04 MB** | over, and the budget line is the one that still bites — see below |
 | Live rigidbodies | ≤ 40 | **up to 44** | 16 boulders + 4 cars + 24 debris, unmeasured |
 | Frame rate | 60 / 30 floor | 60, ~1 ms jitter | measured 2026-09-01, but **before the boulders** |
 
 The frame-rate figure is the one that licenses the other two, and it predates the change most
 likely to break it. Read `FPS`, `worst` and `N boulders live` off the dev readout on a real
 Chromebook before treating any of this as settled.
+
+**On the download line: the 20 MB PER-FILE cap and the 20 MB BUDGET are different things, and
+only the second one survives.** Splitting the build files (see the build-size section) retires
+the cap entirely — it is a chunk size, not a wall. The budget is about how long a download takes
+on school Wi-Fi, and splitting does nothing for that, so **≤ 20 MB stays the target and 25.04 MB
+stays over it.** Argue new content down on download time and rigidbody count, not on the cap.
 
 ## Scripts
 
@@ -2295,6 +2375,23 @@ The general rule, because this project builds all its UI in code: **anything dri
 whose length can change needs a layout that reads that length.** A hand-placed y is a promise
 that the array will never grow.
 
+**IT HAPPENED AGAIN, in the dev tuner — 2026-09-02, and that is the point of writing rules down.**
+The rule above was written for the garage and map select, and the pause screen's `BuildTuner` was
+not changed at the time because it was not broken *yet*. It was written with eight tunables at
+`y = 240 - i * 56`, with the two footer lines hand-placed at `-240` and `-268`. Adding `Grip
+force`, `Steer @ speed` and `Turn assist` took it to **twelve rows**, whose ninth and tenth land
+at `-264` and `-320` — straight through both lines of footer text.
+
+Same fix, same helper: `UiKit.Band(top: 265, bottom: -395, count: Tunables.Length, ...)`, rows at
+`band.Centre(i)`, footers at `band.BottomOf(count)`. At twelve rows the slot comes out at 55
+against the old fixed 56, so **nothing on screen moved except the text that was being overdrawn** —
+which is what a correct layout fix should look like.
+
+`UiKit.ListBand` already had `BottomOf(count)` for exactly this, and it went unused for a year.
+**When a fixed-step list is found, convert the whole screen, including whatever sits below the
+list.** Fixing only the rows leaves the footer as a hand-placed y, which is the half that actually
+broke here.
+
 ### Bullseye — the dartboard map, built 2026-09-01 — CONFIRMED IN PLAY
 
 Ethan's design, from a side-view sketch: bomb down a long ramp, launch off a kicker, fly, and land
@@ -2873,10 +2970,11 @@ governs the E30 simply does not apply.
 
 **What still limits it, and the trade being made:** at 30.7 verts/m² a dent has roughly a third
 the geometry to fold, so it reads as a few broad facets rather than crumpled metal. The real fix
-is subdividing the body at split time — and it is **deliberately not being done**, because
-`carcrash.data.unityweb` is 14.83 MB against a hard 20 MB cap and this would add thousands of
-triangles to the file that is already nearly full. Revisit only after the TMP font trim frees
-space, and measure the download afterwards.
+is subdividing the body at split time — and it was **deliberately not done**, because at the time
+`carcrash.data.unityweb` was 14.83 MB against what was believed to be a hard 20 MB wall.
+**That reason has expired** (2026-09-02): splitting the build files retires the per-file cap, so
+the question is now only whether the triangles are worth the download TIME. Revisit once
+splitting lands, and measure the download afterwards.
 
 **General rule for the next vehicle: every `CarDeformation` length scales with the vehicle, and
 `crumpleScale` scales with its MESH, not its size.** Take `maxDisplacement` and `radius` off the

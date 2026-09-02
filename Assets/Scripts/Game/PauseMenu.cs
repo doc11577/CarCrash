@@ -108,15 +108,31 @@ public class PauseMenu : MonoBehaviour
 
         tunerFields.Clear();
 
+        // Laid out from a BAND, not a fixed step. This screen was written with eight tunables
+        // at `y = 240 - i * 56` and the two footer lines hand-placed at -240; adding Grip
+        // force, Steer @ speed and Turn assist took it to twelve rows, which ran straight
+        // through that text. Exactly the failure the garage had at three cars.
+        //
+        // The band reads Tunables.Length, so the next value added moves the footer down (or
+        // compresses the rows once they would overflow) instead of colliding with it.
+        UiKit.ListBand band = UiKit.Band(top: 265f, bottom: -395f, count: Tunables.Length,
+                                         maxSlot: 56f, padding: 12f, maxHeight: 44f);
+
+        // The band's own fontSize is sized for a button label. The labels and value boxes here
+        // want to stay readable, so they take their own fraction of the row height and shrink
+        // only once the band actually starts compressing.
+        float rowFont = Mathf.Clamp(band.height * 0.55f, 15f, 24f);
+
         for (int i = 0; i < Tunables.Length; i++)
         {
             int index = i;
-            float y = 240f - i * 56f;
+            float y = band.Centre(i);
 
-            UiKit.Text(panel.transform, Tunables[i].label, 24f, UiKit.Ink,
+            UiKit.Text(panel.transform, Tunables[i].label, rowFont, UiKit.Ink,
                        TextAlignmentOptions.Right, new Vector2(370f, y), new Vector2(240f, 34f));
 
-            UiKit.Button(panel.transform, "-", new Vector2(530f, y), new Vector2(46f, 44f),
+            UiKit.Button(panel.transform, "-", new Vector2(530f, y),
+                         new Vector2(46f, band.height),
                          () => Nudge(index, -1f), fontSize: 26f);
 
             // A TYPED field, not a label. Nudging a spring rate from 9000 to 22500 at 500 a
@@ -125,7 +141,7 @@ public class PauseMenu : MonoBehaviour
             // The +/- buttons stay for feeling out a value by ear, which is the other half of
             // what this screen is for.
             TMP_InputField field = UiKit.Field(panel.transform, "", new Vector2(650f, y),
-                                               new Vector2(150f, 44f), 24f);
+                                               new Vector2(150f, band.height), rowFont);
             field.contentType = TMP_InputField.ContentType.DecimalNumber;
 
             // Committed on Enter or on clicking away, NOT per keystroke. onValueChanged would
@@ -136,17 +152,21 @@ public class PauseMenu : MonoBehaviour
 
             tunerFields.Add(field);
 
-            UiKit.Button(panel.transform, "+", new Vector2(770f, y), new Vector2(46f, 44f),
+            UiKit.Button(panel.transform, "+", new Vector2(770f, y),
+                         new Vector2(46f, band.height),
                          () => Nudge(index, 1f), fontSize: 26f);
         }
 
+        // Placed UNDER the last row, wherever that turned out to be.
+        float footer = band.BottomOf(Tunables.Length);
+
         UiKit.Text(panel.transform, "Type a value and press Enter, or nudge with -/+.",
                    20f, UiKit.Muted, TextAlignmentOptions.Center,
-                   new Vector2(560f, -240f), new Vector2(560f, 30f));
+                   new Vector2(560f, footer - 24f), new Vector2(560f, 30f));
 
         UiKit.Text(panel.transform, "Saved per car. RESET PROGRESS clears it.",
                    20f, UiKit.Muted, TextAlignmentOptions.Center,
-                   new Vector2(560f, -268f), new Vector2(560f, 30f));
+                   new Vector2(560f, footer - 52f), new Vector2(560f, 30f));
     }
 
     /// <summary>Apply a typed value, or put the real one back if it was not a number.</summary>
