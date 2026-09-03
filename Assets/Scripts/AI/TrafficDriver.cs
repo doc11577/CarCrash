@@ -2,10 +2,21 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Drives a traffic car down the valley by looking for the way down, not by following a path.
+/// Drives a car down a hill by looking for the way down, or round a track by following its line.
 /// </summary>
 /// <remarks>
-/// THE WHOLE STEERING RULE IS "GO WHERE THE GROUND DROPS MOST". A fan of short downward probes
+/// TWO STEERING RULES IN ONE COMPONENT, chosen by whether a <see cref="RaceTrack"/> has been
+/// handed over. They share everything below the choice of direction — the hazard sweep, the
+/// sideslip catch, the speed-scaled steering slew, the wrong-way turnaround, the stuck recovery —
+/// and that sharing is the point: a race car and a traffic car that handled differently would be
+/// two things to fix every time something went wrong with either.
+///
+///   DESTRUCTION — "go where the ground drops most", described below.
+///   RACE — aim at a point ON the racing line, offset into a chosen lane. See `RaceDecide`, and
+///   note that it does NOT score directions: it cannot choose to leave the line, which is what
+///   three rounds of penalty tuning failed to achieve.
+///
+/// THE DESTRUCTION RULE IS "GO WHERE THE GROUND DROPS MOST". A fan of short downward probes
 /// is thrown ahead of the car, and it steers at whichever one finds the biggest drop.
 ///
 /// That one rule covers everything this map needs, which is why there is no path and no
@@ -151,48 +162,60 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "bias, the slide catch and the speed-scaled lookahead all apply to a race unaltered.")]
     public RaceTrack track;
 
-    [Tooltip("How much a metre of track gained is worth, against a metre of descent on a " +
-             "destruction map.\n\n" +
-             "The two rules produce numbers of very different size — a good descent is a few " +
-             "metres, a good probe on a race line is nearly the whole lookahead, so 50 — and " +
-             "every other weight in this component (hazardWeight, straightBias) was tuned " +
-             "against the small one. Progress is therefore normalised by the lookahead first, " +
-             "giving roughly 0-1, and scaled back up to the range a drop occupies. That is what " +
-             "lets the existing weights keep their meaning instead of being retuned twice.")]
-    public float progressScale = 10f;
+    [Tooltip("Metres up the track the car aims when stopped. The pursuit target is always ON " +
+             "the racing line, which is what makes corner cutting impossible rather than merely " +
+             "expensive.\n\n" +
+             "Short makes it hug the line and wobble; long makes it smooth and lazy into corners.")]
+    public float aimAhead = 14f;
 
-    [Tooltip("Penalty for landing OUTSIDE the track's own width, per metre SQUARED.\n\n" +
-             "⚠ IT IS SQUARED, AND THAT IS THE FIX FOR CORNER CUTTING. A linear penalty loses " +
-             "this argument: cutting a corner can gain MORE than the probe's straight-line " +
-             "reach, because a chord across a bend covers more track than driving round it — so " +
-             "the progress term pays about 4 for a cut that a linear penalty charged 3.6 for, " +
-             "and the car took it every time. Squared, being 4 m off the road costs 16 instead " +
-             "of 3.6, so a line within the road is free and leaving it is not.\n\n" +
-             "Raise it if they still clip the inside, lower it if they refuse to take a line at " +
-             "all and drive nose-to-tail down the exact centre.")]
-    public float racingLineWeight = 1f;
+    [Tooltip("EXTRA metres of aim per m/s, so the car looks further ahead the faster it goes and " +
+             "gets the same amount of TIME to react. Same argument as Look Ahead Per Speed.")]
+    public float aimAheadPerSpeed = 0.55f;
 
-    [Tooltip("Fraction of the half-width a probe may stray before the SQUARED penalty applies. " +
-             "Below 1 the AI is charged for using the outer part of the road. At 1 the whole " +
-             "road is free of that term — Centre Pull still applies everywhere.")]
-    [Range(0.2f, 1f)] public float racingLineSlack = 0.75f;
+    [Tooltip("Fraction of the HALF-WIDTH that the straight line to the aim point may stray from " +
+             "the track before the aim is pulled in closer.\n\n" +
+             "⚠ THIS IS THE ONE WAY PURE PURSUIT CAN STILL CUT A CORNER, so it is the number to " +
+             "reach for if they do. Aiming at a point on the line is no defence if the line to " +
+             "THAT point crosses the infield — which is exactly what a distant aim point does on " +
+             "a hairpin. Lower is tighter and safer; too low and the car chases its own bumper " +
+             "and weaves on the straights.")]
+    [Range(0.1f, 1f)] public float aimDeviation = 0.35f;
 
-    [Tooltip("Penalty per metre from the CENTRELINE, applied everywhere including on the road. " +
-             "This is what makes the cars want to sit on the middle of the line rather than " +
-             "roam the corridor.\n\n" +
-             "It is separate from Racing Line Weight because the two want different shapes: " +
-             "this one is linear and gentle, so a metre off centre costs a metre's worth and the " +
-             "car is always mildly drawn back; that one is squared and brutal, and exists only " +
-             "to make leaving the road unthinkable.\n\n" +
-             "TURN IT DOWN toward 0.3 once the racing is reliable — hugging the exact centre is " +
-             "tidy but it makes passing impossible and it reads as a train rather than a race.")]
-    public float centrePull = 1.2f;
+    [Header("Racing — lanes and passing")]
+    [Tooltip("Lanes considered across the road. Odd keeps one on the centreline. This is the " +
+             "fan, repurposed: it used to choose the HEADING, which is what let it choose a " +
+             "heading off the road. Now it chooses only how far ACROSS the road to aim.")]
+    [Range(3, 9)] public int lanes = 5;
 
-    [Tooltip("Points sampled ALONG each probe when scoring how far it strays from the line. 1 " +
-             "scores only where the probe lands, which is what let cars drive straight across " +
-             "the inside of a hairpin — the far side of the bend is on the road, so it looked " +
-             "free. 3 is enough to catch a cut; more costs projections and finds nothing new.")]
-    [Range(1, 6)] public int pathSamples = 3;
+    [Tooltip("Metres of road kept clear at each edge, so picking the outside lane does not put " +
+             "the wheels in the dirt. About half a car.")]
+    public float laneMargin = 1.8f;
+
+    [Tooltip("Metres per second the lane may slide across the road. A lane change is a " +
+             "manoeuvre: snapping the target sideways is a flick of the wheel that unsettles the " +
+             "car mid-corner and reads as twitching rather than as choosing a line.")]
+    public float laneRate = 6f;
+
+    [Tooltip("Pull back toward the centre of the road, per metre. This is what makes them sit " +
+             "on the line when nothing is in the way — and unlike the penalty it replaced, it " +
+             "can be small, because it is no longer the only thing preventing a corner cut.")]
+    public float laneCentreBias = 0.35f;
+
+    [Tooltip("Cost of moving off the lane currently held, per metre. Hysteresis: without it the " +
+             "car swaps lanes whenever two score within a hair of each other.")]
+    public float laneChangeCost = 0.25f;
+
+    [Tooltip("How much a lane blocked by another car counts against it. THIS IS THE OVERTAKING " +
+             "KNOB — raise it and they commit to a pass, lower it and they queue up behind.")]
+    public float passWeight = 3f;
+
+    [Tooltip("Metres ahead that another car still blocks a lane. Roughly how far ahead a pass " +
+             "is planned.")]
+    public float passLookahead = 30f;
+
+    [Tooltip("Metres either side of a lane that another car occupies. About a car's width plus " +
+             "room to get by.")]
+    public float laneClearance = 2.6f;
 
     [Header("Racing — braking")]
     [Tooltip("Lateral acceleration the AI believes it has, in m/s². This sets corner entry " +
@@ -280,6 +303,10 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     [Tooltip("True while the AI is on the brakes for a corner it can see coming.")]
     [SerializeField] bool brakingReadout;
 
+    [Tooltip("Metres right of the centreline the car is currently aiming. 0 is the middle of the " +
+             "road; it moves off only to pass or to dodge something.")]
+    [SerializeField] float laneReadout;
+
     /// <summary>Where this car is round the track, or null on a destruction map.</summary>
     /// <remarks>
     /// Public so a race director can read the standings without giving every car a SECOND
@@ -301,6 +328,10 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     float noDescentSince = -1f;
     float reverseUntil = -1f;
     float nextScanAt;
+    float lane;
+    Vector3 aimPoint;
+    Vector3 laneLeft;
+    Vector3 laneRight;
     float wrongWaySince = -1f;
     bool turningAround;
     Vector3 downhill = Vector3.forward;
@@ -389,6 +420,12 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
 
     void Decide()
     {
+        if (Racing)
+        {
+            RaceDecide();
+            return;
+        }
+
         Vector3 forward = Flat(transform.forward);
         if (forward.sqrMagnitude < 1e-4f) forward = Vector3.forward;
 
@@ -419,75 +456,9 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
             // No ground found at all: a hole, or beyond the mesh. Treated as the worst option
             // rather than the best, or cars would dive off the outside of the map. Applies to
             // both rules — a race line that leaves the map is not a shortcut.
-            float worth;
-            if (float.IsNegativeInfinity(there))
-            {
-                worth = -1000f;
-            }
-            else if (Racing)
-            {
-                // THE ONE LINE THAT MAKES THIS A RACE. Descent is replaced by progress along
-                // the track; every other term below is the destruction AI's, unchanged.
-                //
-                // Measured against the GROUND at the probe, not against the flat point the
-                // probe was aimed at. On a climb or a descent the flat point hangs several
-                // metres off the road, and since the offset from the centreline is what keeps
-                // cars on the racing line, that would read as every direction being off the
-                // track — worst exactly where the track is most interesting. `there` is the
-                // ground height already measured above, so this costs nothing.
-                // ⚠ SAMPLED ALONG THE PROBE, NOT JUST AT THE END OF IT. Scoring only where the
-                // probe LANDS is what let cars drive straight across the inside of a hairpin:
-                // the far side of the bend IS on the road, so the landing point attracted no
-                // penalty at all, while the progress it bought was enormous.
-                //
-                // This is the same lesson the hazard sweep learned and it is worth stating in
-                // the same words: point sampling answers "is that spot on the track", and the
-                // question is "does getting there stay on the track". The worst offset along the
-                // way is what the penalty is charged on.
-                float gained = 0f;
-                float offCentre = 0f;
-                int steps = Mathf.Max(1, pathSamples);
-
-                for (int s = 1; s <= steps; s++)
-                {
-                    float f = s / (float)steps;
-                    Vector3 along = transform.position + dir * (reach * f);
-
-                    // Height interpolated between the two ground samples already taken rather
-                    // than cast for. The deviation that matters here is tens of metres sideways;
-                    // a couple of metres of height error does not change the answer, and four
-                    // extra raycasts per probe per car would.
-                    along.y = Mathf.Lerp(here, there, f) + 0.5f;
-
-                    float step = Line.Gain(along, out float off);
-                    if (s == steps) gained = step;
-                    if (off > offCentre) offCentre = off;
-                }
-
-                // THE PENALTY IS UNBOUNDED AND THAT IS DELIBERATE — it has to do two jobs at
-                // once, and a flat "off the track is disqualified" rule does the second one
-                // catastrophically badly.
-                //
-                //   ON the road, it stops corner cutting. Progress alone always prefers the
-                //   inside, because a chord across a bend covers MORE track than driving round
-                //   it — a cut can score above the probe's own reach, which no linear penalty
-                //   was ever going to out-argue.
-                //
-                //   OFF the road, it is the way back. Rejecting every off-track probe outright
-                //   leaves a spun-off car with seven identical scores, and identical scores mean
-                //   the first probe wins — full lock, into the scenery, forever. Growing the
-                //   penalty instead means the LEAST wrong direction still wins, so the car
-                //   always steers back toward the road it can no longer reach directly.
-                float wide = Mathf.Max(0f, offCentre - track.width * 0.5f * racingLineSlack);
-
-                worth = gained / Mathf.Max(1f, reach) * progressScale
-                        - offCentre * centrePull
-                        - wide * wide * racingLineWeight;
-            }
-            else
-            {
-                worth = here - there;
-            }
+            // No ground found at all: a hole, or beyond the mesh. Treated as the worst option
+            // rather than the best, or cars would dive off the outside of the map.
+            float worth = float.IsNegativeInfinity(there) ? -1000f : here - there;
 
             float blocked = Hazard(dir, here, there, reach);
             scores[i] = worth - blocked * hazardWeight
@@ -507,6 +478,164 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         bestDropReadout = bestDrop;
         hazardReadout = bestHazard;
         chosenAngleReadout = bestAngle;
+    }
+
+    /// <summary>
+    /// Steering for a race: aim at a point ON the line, offset sideways into a chosen lane.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ THIS REPLACED A PENALTY, AND THE DIFFERENCE IS A GUARANTEE VERSUS A HOPE. Two rounds
+    /// were spent making corner cutting expensive — squaring the penalty, sampling along the
+    /// probe, pulling toward the centre — and cars kept cutting, because **anything scored
+    /// against progress can be outweighed by enough progress.** A hairpin offers so much of it
+    /// that no coefficient is safe: tune the penalty high enough to stop the worst corner and
+    /// the cars will not move off the centreline to pass, which is the thing that was wanted.
+    ///
+    /// So the direction is no longer chosen from a fan at all. **The car steers at a point that
+    /// is ON the racing line, so leaving the line is not an option it can score — it is not an
+    /// option it has.** Cutting becomes geometrically impossible rather than merely unattractive,
+    /// and it costs nothing to allow a full lane of movement for passing, because that movement
+    /// is a sideways offset of a target that is still on the track.
+    ///
+    /// The probe fan does not disappear, it stops doing the wrong job. It used to choose the
+    /// heading; now it chooses the LANE. Rocks, walls and slower cars push the car across the
+    /// road rather than off it.
+    ///
+    /// THE ONE WAY PURE PURSUIT CAN STILL CUT is an aim point so far ahead that the straight line
+    /// to it leaves the road — the classic failure, and on a hairpin it is severe. `SafeLookahead`
+    /// shortens the aim until the chord to it stays within a fraction of the road width, so the
+    /// car looks a long way down a straight and only as far as it can see round a bend.
+    ///
+    /// CHEAPER, TOO: one ground ray plus one sweep per lane, against the fan's ray-and-sweep per
+    /// probe. Five lanes is six casts a decision where seven probes was fourteen.
+    /// </remarks>
+    void RaceDecide()
+    {
+        float speed = body != null ? body.linearVelocity.magnitude : 0f;
+        speedReadout = speed;
+
+        float half = track.width * 0.5f;
+
+        // How far ahead to aim, then shortened until the straight line to it stays on the road.
+        float desired = aimAhead + speed * aimAheadPerSpeed;
+        float look = track.SafeLookahead(Line.LapDistance, desired,
+                                         Mathf.Max(0.5f, half * aimDeviation), aimAhead * 0.5f);
+        reachReadout = look;
+
+        Vector3 centre = Line.Aim(look);
+        Vector3 ahead = track.ForwardAtDistance(Line.LapDistance + look);
+        Vector3 right = Vector3.Cross(Vector3.up, ahead).normalized;
+
+        // Lanes stop short of the edge by half a car, so choosing the outside lane does not put
+        // the wheels in the dirt.
+        float usable = Mathf.Max(0f, half - laneMargin);
+        float here = GroundHeight(transform.position, 6f);
+
+        int count = Mathf.Max(3, lanes);
+        float best = float.NegativeInfinity;
+        float bestLane = 0f;
+        float bestHazard = 0f;
+
+        for (int i = 0; i < count; i++)
+        {
+            float candidate = Mathf.Lerp(-usable, usable, i / (float)(count - 1));
+            Vector3 aim = centre + right * candidate;
+
+            Vector3 offset = aim - transform.position;
+            offset.y = 0f;
+            float distance = offset.magnitude;
+            if (distance < 1f) continue;
+
+            Vector3 dir = offset / distance;
+
+            // The aim point is ON the track, so its own height is the ground height there. That
+            // is what removes a raycast per candidate: the fan had to ask the world where the
+            // ground was, and a point on the racing line already knows.
+            float blocked = Hazard(dir, here, aim.y, distance);
+
+            float score = -blocked * hazardWeight
+                          - Occupancy(candidate) * passWeight
+                          - Mathf.Abs(candidate) * laneCentreBias
+                          - Mathf.Abs(candidate - lane) * laneChangeCost;
+
+            if (score <= best) continue;
+
+            best = score;
+            bestLane = candidate;
+            bestHazard = blocked;
+        }
+
+        // Slewed, not snapped. A lane change is a manoeuvre — jumping the target three metres
+        // sideways in one decision is a flick of the wheel that unsettles the car mid-corner,
+        // and it reads as twitching rather than as choosing a line.
+        lane = Mathf.MoveTowards(lane, bestLane, laneRate / Mathf.Max(1f, decisionsPerSecond));
+        laneReadout = lane;
+
+        aimPoint = centre + right * lane;
+        laneLeft = centre - right * usable;
+        laneRight = centre + right * usable;
+
+        Vector3 toTarget = aimPoint - transform.position;
+        toTarget.y = 0f;
+
+        Vector3 forward = Flat(transform.forward);
+        if (toTarget.sqrMagnitude > 1e-4f)
+            chosenAngle = Vector3.SignedAngle(forward, toTarget.normalized, Vector3.up);
+
+        // SeparationBias is deliberately NOT applied here. It is the destruction AI's way of
+        // stopping a pack converging, and lane choice already does that job with better
+        // information — the two together fight, and the car ends up steering away from a car it
+        // has already picked a lane to avoid.
+        hazardReadout = bestHazard;
+        chosenAngleReadout = chosenAngle;
+        bestDropReadout = 0f;
+    }
+
+    /// <summary>
+    /// How occupied a lane is by other racers between here and <see cref="passLookahead"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is what makes passing a decision rather than an accident. A car sitting in your lane
+    /// ahead makes that lane expensive, so the lane scan picks a clear one and the pursuit target
+    /// slides across the road — a real overtake, on the racing line, without ever leaving it.
+    ///
+    /// Positions go through this car's OWN follower, which answers both questions at once and
+    /// costs one projection each: how far ahead the other car is along the track, and how far
+    /// across it. It also means the PLAYER is included without needing a follower of their own,
+    /// which matters — an AI that only sees other AI drives straight through the one car the
+    /// player is in.
+    ///
+    /// Cars BEHIND are ignored. Blocking a faster car is racecraft this game does not need, and
+    /// a car that swerves for something already past it is just unstable.
+    /// </remarks>
+    float Occupancy(float candidate)
+    {
+        float busy = 0f;
+
+        for (int i = 0; i < Live.Count; i++)
+        {
+            TrafficDriver other = Live[i];
+            if (other == null || other == this) continue;
+            busy += Blocking(candidate, other.transform.position);
+        }
+
+        if (PlayerCar.Current != null)
+            busy += Blocking(candidate, PlayerCar.Current.transform.position);
+
+        return busy;
+    }
+
+    float Blocking(float candidate, Vector3 position)
+    {
+        float gain = Line.Gain(position, out float across);
+
+        // Slightly ahead, not alongside: a car level with you is dealt with by the collision, and
+        // treating it as a blockage makes both cars dive for the same gap.
+        if (gain <= 3f || gain > passLookahead) return 0f;
+        if (Mathf.Abs(across - candidate) > laneClearance) return 0f;
+
+        // Closer is worse, so a lane blocked 5 m ahead costs far more than one blocked at 30.
+        return 1f - gain / passLookahead;
     }
 
     /// <summary>
@@ -912,6 +1041,22 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     {
         Vector3 forward = Flat(transform.forward);
         if (forward.sqrMagnitude < 1e-4f) return;
+
+        if (Racing)
+        {
+            // The aim point and the lanes it was chosen from. This is the whole race steering
+            // rule made visible: if the gold line ever leaves the road, the aim is reaching too
+            // far past a corner and `aimDeviation` is the number to lower.
+            Gizmos.color = new Color(0.35f, 0.85f, 1f, 0.55f);
+            Gizmos.DrawLine(laneLeft, laneRight);
+
+            Gizmos.color = brakingReadout
+                ? new Color(1f, 0.3f, 0.25f, 1f)
+                : new Color(1f, 0.78f, 0.15f, 1f);
+            Gizmos.DrawLine(transform.position, aimPoint);
+            Gizmos.DrawSphere(aimPoint, 0.7f);
+            return;
+        }
 
         float fan = reachReadout > 1f ? reachReadout : lookAhead;
         Gizmos.color = new Color(0.3f, 0.9f, 1f, 0.8f);

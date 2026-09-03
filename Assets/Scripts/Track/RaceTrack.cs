@@ -315,6 +315,71 @@ public class RaceTrack : MonoBehaviour
     }
 
     /// <summary>
+    /// How far the straight line from one point on the track to another strays from the track.
+    /// </summary>
+    /// <remarks>
+    /// Compares the chord against the equal-arc-length point on the line rather than taking a
+    /// true perpendicular distance. That OVERSTATES the deviation slightly, which is the right
+    /// way to be wrong here: the caller uses it to decide how far ahead it is safe to aim, and
+    /// erring toward a shorter aim costs a little smoothness while erring long puts a car
+    /// through a barrier.
+    /// </remarks>
+    public float ChordDeviation(float from, float span, int samples)
+    {
+        if (Segments == 0 || span <= 0.01f) return 0f;
+
+        Vector3 a = PointAtDistance(from);
+        Vector3 b = PointAtDistance(from + span);
+        float worst = 0f;
+
+        for (int i = 1; i < samples; i++)
+        {
+            float f = i / (float)samples;
+
+            Vector3 chord = Vector3.Lerp(a, b, f);
+            Vector3 onLine = PointAtDistance(from + span * f);
+
+            chord.y = 0f;
+            onLine.y = 0f;
+
+            float miss = Vector3.Distance(chord, onLine);
+            if (miss > worst) worst = miss;
+        }
+
+        return worst;
+    }
+
+    /// <summary>
+    /// The furthest a car may aim ahead while the straight line to that point stays on the road.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ THIS IS WHAT STOPS PURE PURSUIT CUTTING CORNERS, and without it the whole approach fails
+    /// in the one place it matters. Aiming at a point ON the line is no defence at all if the
+    /// line TO that point crosses the infield — which is exactly what a distant aim point does on
+    /// a hairpin, and a hairpin is where cars were cutting.
+    ///
+    /// Shortened by repeated thirds rather than solved for: the relationship between aim distance
+    /// and deviation depends on the shape of the corner, four steps cover an 8:1 range, and each
+    /// step is a handful of lerps. Precision here buys nothing — the answer feeds a steering
+    /// target that is slewed anyway.
+    ///
+    /// The effect is a car that looks a long way down a straight and only as far as it can see
+    /// round a bend, which is also what a driver does.
+    /// </remarks>
+    public float SafeLookahead(float from, float desired, float allowed, float floor)
+    {
+        float distance = Mathf.Max(floor, desired);
+
+        for (int i = 0; i < 4 && distance > floor; i++)
+        {
+            if (ChordDeviation(from, distance, 4) <= allowed) break;
+            distance = Mathf.Max(floor, distance * 0.7f);
+        }
+
+        return distance;
+    }
+
+    /// <summary>
     /// The fastest a car may be going HERE and still make every corner in the next
     /// <paramref name="scan"/> metres.
     /// </summary>
@@ -592,9 +657,10 @@ public class RaceTrack : MonoBehaviour
         /// of a lap gained. Anything outside the window is reported as no gain at all, which
         /// makes a probe pointing at unreachable track the worst option rather than the best.
         ///
-        /// <paramref name="offset"/> comes back as the distance from the centreline, so the
-        /// caller can prefer a line that stays on the road. Without it the best-progress answer
-        /// is always the inside of the corner, which on a dam wall is the wall.
+        /// <paramref name="offset"/> comes back SIGNED — positive is right of the direction of
+        /// travel — because the callers that want it are choosing sides. "That car is 4 m from
+        /// the centreline" does not say whether to pass it on the left or the right; "that car is
+        /// at +4" does.
         /// </remarks>
         public float Gain(Vector3 at, out float offset)
         {
@@ -607,6 +673,7 @@ public class RaceTrack : MonoBehaviour
             float best = float.PositiveInfinity;
             int bestOffset = 0;
             float bestAlong = 0f;
+            Vector3 bestPoint = at;
 
             for (int d = -window; d <= window; d++)
             {
@@ -620,13 +687,25 @@ public class RaceTrack : MonoBehaviour
                 best = sqr;
                 bestOffset = d;
                 bestAlong = t;
+                bestPoint = onLine;
             }
 
             if (float.IsPositiveInfinity(best)) return 0f;
 
-            offset = Mathf.Sqrt(best);
-
             int unwrapped = Segment + bestOffset;
+
+            // Signed against the track's own right-hand side at the projected point, flattened —
+            // the side of the road something is on is a question about the map, not about how
+            // steep the road happens to be there.
+            Vector3 run = track.Point(unwrapped + 1) - track.Point(unwrapped);
+            run.y = 0f;
+
+            Vector3 sideways = at - bestPoint;
+            sideways.y = 0f;
+
+            offset = run.sqrMagnitude < 1e-6f
+                ? Mathf.Sqrt(best)
+                : Vector3.Dot(sideways, Vector3.Cross(Vector3.up, run.normalized));
             float laps = 0f;
             if (track.loop)
             {

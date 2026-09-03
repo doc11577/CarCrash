@@ -1246,7 +1246,66 @@ It had been left at its 22 m default on a **12 m** track, so nothing was ever of
 it from the width means narrowing the road narrows it too, instead of it being a second thing to
 remember.
 
-#### THE HAIRPIN CUT: SCORING WHERE A PROBE LANDS IS THE WRONG QUESTION — 2026-09-02
+#### CORNER CUTTING IS FIXED BY GEOMETRY, NOT BY A PENALTY — 2026-09-02
+
+**Three rounds were spent making corner cutting expensive and the cars kept doing it.** The
+penalty was squared, then sampled along the probe, then given a centre-pull term. Each fix was
+correct on its own terms and none of them worked, because of something that should have been
+obvious two rounds earlier:
+
+**ANYTHING SCORED AGAINST PROGRESS CAN BE OUTWEIGHED BY ENOUGH PROGRESS.** A hairpin offers so
+much of it — 40 m of dirt buys over 100 m of track — that no coefficient is safe. And the
+coefficient that finally stops the worst corner also stops the cars moving off the centreline to
+pass, which was the other thing that was wanted. There is no value that does both.
+
+**So the direction is no longer chosen from the fan at all.** `RaceDecide` steers at a point that
+is ON the racing line, offset sideways into a chosen lane. **Leaving the line stops being an
+option the car scores badly and becomes an option it does not have.** Cutting is geometrically
+impossible, and it then costs nothing to allow a full lane of movement for passing, because that
+movement is a sideways offset of a target that is still on the track.
+
+**The fan is not deleted, it stops doing the wrong job.** It used to choose the HEADING, which is
+precisely how it could choose a heading off the road. It now chooses the LANE: rocks, walls and
+slower cars push the car across the road instead of off it. Same sphere sweep, same weighting,
+one less degree of freedom — and the one taken away is the one that was causing the damage.
+
+**⚠ PURE PURSUIT HAS EXACTLY ONE WAY LEFT TO CUT A CORNER, and it is the classic one:** an aim
+point so far ahead that the straight line TO it crosses the infield. Aiming at a point on the line
+is no defence if the path there is not. `RaceTrack.SafeLookahead` shortens the aim by thirds until
+the chord stays within `aimDeviation` (0.35) of the half width. Worked through for the hairpin in
+the screenshot — R ≈ 35 m, 12 m road:
+
+| Speed | Aim wanted | Aim used | Chord strays |
+| --- | --- | --- | --- |
+| 25 m/s | 27.8 m | **19.4 m** | 1.34 m |
+| 20 m/s | 25.0 m | **17.5 m** | 1.09 m |
+| 15 m/s | 22.2 m | 22.2 m | 1.75 m |
+
+Against a 6 m half width, so the car physically cannot stray more than about a metre from the
+line through that corner. On a straight the deviation is zero and it aims the full distance — it
+looks a long way down a straight and only as far as it can see round a bend, which is also what a
+driver does. **If they ever cut again, `aimDeviation` is the number, and it is the only one.**
+
+**Passing is now a decision rather than an accident.** `Occupancy` asks this car's own follower
+where every other racer is — how far ahead along the track and how far across it, one projection
+each — and makes an occupied lane expensive. **The player is included for free**, which matters:
+an AI that only sees other AI drives straight through the one car the player is in. `passWeight`
+is the overtaking knob; raise it and they commit, lower it and they queue up.
+
+**It is also CHEAPER than the fan it replaced.** The aim point is on the track, so its own height
+IS the ground height there — no raycast needed to aim the sweep. Five lanes is one ray plus five
+sweeps a decision, against seven probes' fourteen casts. **The race AI costs roughly half what
+the destruction AI does**, which is worth having with eight cars still unmeasured.
+
+`Gain` now returns a SIGNED offset, positive to the right of travel. "That car is 4 m from the
+centreline" does not say which way to go round it; "that car is at +4" does.
+
+**Removed with the old approach:** `progressScale`, `racingLineWeight`, `racingLineSlack`,
+`centrePull`, `pathSamples`. They describe a scoring rule that no longer exists, and a dead
+tunable is a trap for whoever reads the Inspector next. `cornerLift` is now destruction-only —
+race braking is the corner-speed model below.
+
+#### ~~THE HAIRPIN CUT: SCORING WHERE A PROBE LANDS IS THE WRONG QUESTION~~ — SUPERSEDED, see above
 
 Second report, with a screenshot: on a hairpin, a car left the road entirely and drove straight
 across the inside on the dirt. The waypoints were good — the line followed the road neatly through
