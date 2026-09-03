@@ -382,7 +382,18 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     {
         // Start, not Awake: RaceTrack builds its distance table in ITS Awake, and component
         // order across GameObjects is undefined. Acquiring here means the table exists.
-        if (track != null) Line = track.Follow(transform.position);
+        //
+        // ⚠ ONLY IF THERE ISN'T ONE ALREADY. This used to assign unconditionally, which quietly
+        // threw away the follower `Race` had just created and replaced it with an identical
+        // second one. Anything that had already taken a reference to the first — the race
+        // director does, at exactly this point in the frame — was then holding a follower that
+        // nothing advances. Its distance sat at the start line forever, so every AI read as
+        // having made no progress and the player was permanently P1.
+        //
+        // The rule this breaks is written at the top of RaceTrack: ONE follower per car. It is
+        // worth noting that the fault was invisible in isolation, because the abandoned follower
+        // is a perfectly valid object that simply never moves.
+        if (track != null && Line == null) Line = track.Follow(transform.position);
     }
 
     /// <summary>Put this car on a track and switch it from descent-seeking to racing.</summary>

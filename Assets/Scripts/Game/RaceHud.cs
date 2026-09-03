@@ -40,6 +40,26 @@ public class RaceHud : MonoBehaviour
     [Tooltip("Seconds the GO! stays up after the green light.")]
     public float goHold = 1.1f;
 
+    /// <summary>
+    /// Opens the accent-coloured, enlarged run for the number that matters.
+    /// </summary>
+    /// <remarks>
+    /// The two readouts each pair a CURRENT value with a TOTAL, and only the current one is being
+    /// read at 140 km/h. Making it bigger and gold and letting the total recede means the glance
+    /// lands on the right half — where two numbers at the same weight make the eye read the whole
+    /// string before finding the one it wanted.
+    ///
+    /// The hex is <see cref="UiKit.Accent"/>, written out because a rich-text tag needs a literal.
+    /// If that colour is ever retuned, this is the second place it lives.
+    /// </remarks>
+    const string Big = "<size=125%><color=#FFC726>";
+
+    /// <summary>Dimmed white for the total, which is context rather than information.</summary>
+    const string Faint = "<color=#FFFFFF8C>";
+
+    /// <summary>Size of the total, as a percentage of the label's own font size.</summary>
+    const int SmallPercent = 60;
+
     RaceDirector race;
 
     TextMeshProUGUI position;
@@ -88,8 +108,11 @@ public class RaceHud : MonoBehaviour
                          new Vector2(0f, 1f), new Vector2(40f, -34f), TextAlignmentOptions.TopLeft);
         position.fontStyle = FontStyles.Bold;
 
+        // Dropped by 1.3x the position's font size, not 1x: the position number is drawn at 125%
+        // by the rich-text tag, so a gap sized to the nominal font size lets the enlarged digits
+        // sit on top of this line.
         lap = Label(screen, "Lap", lapSize, UiKit.Muted,
-                    new Vector2(0f, 1f), new Vector2(40f, -34f - positionSize),
+                    new Vector2(0f, 1f), new Vector2(40f, -34f - positionSize * 1.3f),
                     TextAlignmentOptions.TopLeft);
 
         countdown = Label(screen, "Countdown", countdownSize, UiKit.Accent,
@@ -123,7 +146,11 @@ public class RaceHud : MonoBehaviour
         // Nothing on this canvas is clickable, and a raycast target costs a hit test per pointer
         // event for nothing. Same rule ScoreHud follows.
         text.raycastTarget = false;
-        text.richText = false;
+
+        // Rich text ON here, unlike ScoreHud's popups. The position and lap readouts each set a
+        // size and a colour mid-string. Both are vertex-level effects, so neither instantiates a
+        // material — which is the reason the popups have no outline, and does not apply to these.
+        text.richText = true;
         text.textWrappingMode = TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Overflow;
 
@@ -188,18 +215,23 @@ public class RaceHud : MonoBehaviour
 
         // Only pushed when the INTEGER changes. Assigning a string every frame allocates and
         // rebuilds the canvas batch on a canvas that is otherwise completely static.
+        // Only pushed when the INTEGER changes, so the canvas batch is not rebuilt every frame.
+        // That matters more here than it looks: these strings carry rich-text tags, so a
+        // reassignment re-parses them as well as re-laying out the text.
         int place = race.Player.position;
         if (place != shownPosition)
         {
             shownPosition = place;
-            position.SetText("P{0}/{1}", place, race.Standings.Count);
+            position.text = $"{Big}{place}</color></size><size={SmallPercent}%>{Faint}/" +
+                            $"{race.Standings.Count}</color></size>";
         }
 
         int onLap = race.LapOf(race.Player);
         if (onLap == shownLap) return;
 
         shownLap = onLap;
-        lap.SetText("LAP {0}/{1}", onLap, race.Laps);
+        lap.text = $"LAP {Big}{onLap}</color></size><size={SmallPercent}%>{Faint}/" +
+                   $"{race.Laps}</color></size>";
     }
 
     void DrawResult()

@@ -1026,6 +1026,35 @@ everything in this section is not.
   distance sort makes the winner visibly slide down the order the moment their progress stops
   climbing while everyone else completes the lap.
 
+#### ⚠ THE PLAYER WAS PERMANENTLY P1 — one car, two followers, 2026-09-03
+
+Reported on the first race: the position readout showed `P1/8` for the whole race. It is worth
+recording in full because **the rule it broke is written at the top of `RaceTrack`, and the code
+that broke it was written in the same session.**
+
+`TrafficDriver.Race()` creates the car's follower. `TrafficDriver.Start()` then ran
+`Line = track.Follow(...)` **unconditionally**, quietly throwing that follower away and replacing
+it with an identical second one. Anything holding a reference to the first — and the race director
+took one, at exactly that point in the frame — was left watching **a follower that nothing ever
+advances.** Its distance sat at the start line forever, so every AI read as having covered zero
+metres and the player sorted first from the green light to the flag.
+
+**The abandoned follower is a perfectly valid object that simply never moves**, which is why
+nothing errored and why inspecting either class on its own showed nothing wrong.
+
+Fixed twice over, deliberately:
+
+- **`Start` only acquires a follower if there is not one already.** That is the actual fix.
+- **`RaceDirector.Racer` stores the DRIVER, not its follower**, and reads `driver.Line` fresh on
+  every access. A cached reference to a mutable field is the whole bug class; asking each time
+  costs a null check and cannot go stale.
+
+**And the readouts exist now, because a position stuck at 1 looks identical whether the sort is
+wrong, the progress is wrong, or the player is simply winning.** `RaceDirector.standings` prints
+every racer and their metres. If the AI all read 0 m while the player climbs, it is their
+followers — not the sort. This is the same lesson as `RunScore.playerCar` being left empty:
+**a frozen readout looks identical to a broken formula, a broken event and a broken subscription.**
+
 #### R means RESPAWN in a race, and the follower has to be told
 
 `RunRestart` reloads the scene, which mid-race throws away seven other cars' races along with the

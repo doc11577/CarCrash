@@ -105,15 +105,45 @@ public class RaceDirector : MonoBehaviour
              "default — see TrafficSpawner.randomPlayerSlot.")]
     [SerializeField] int gridSlot;
 
+    [Tooltip("Metres of track the player has covered since the green light.")]
+    [SerializeField] float playerProgress;
+
+    [Tooltip("The whole field and how far each has got. If every AI reads 0 m while the player " +
+             "climbs, their followers are not being advanced — that is a follower problem, not " +
+             "a sorting one.")]
+    [SerializeField] string standings;
+
     /// <summary>One car in the race.</summary>
     public class Racer
     {
         public Transform transform;
         public CarController car;
         public CarDamage damage;
-        public RaceTrack.Follower line;
         public string name;
         public bool isPlayer;
+
+        /// <summary>The AI driving this car, or null for the player.</summary>
+        public TrafficDriver driver;
+
+        /// <summary>The player's follower. AI cars use their driver's — see <see cref="Line"/>.</summary>
+        public RaceTrack.Follower ownLine;
+
+        /// <summary>
+        /// Where this car is on the track, asked of its driver FRESH every time.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ NOT A CACHED REFERENCE, and that is the fix for a bug that made every AI read as
+        /// having made no progress. Holding a reference to `driver.Line` means holding whichever
+        /// follower existed at the moment the field was gathered — and if anything replaces that
+        /// object afterwards, this component is left watching a follower nobody advances. Its
+        /// distance sits at the start line forever and the player is permanently first.
+        ///
+        /// Asking the driver each time costs a null check and cannot go stale. The rule is still
+        /// one follower per car; this just stops there being a second way to get it wrong.
+        /// </remarks>
+        public RaceTrack.Follower Line => driver != null && driver.Line != null
+            ? driver.Line
+            : ownLine;
 
         /// <summary>Follower distance at the green light, so grid position does not skew laps.</summary>
         public float startDistance;
@@ -266,7 +296,7 @@ public class RaceDirector : MonoBehaviour
         foreach (TrafficDriver driver in TrafficDriver.All)
         {
             if (driver == null || !driver.Racing) continue;
-            Add(driver.transform, driver.name, false, driver.Line);
+            Add(driver.transform, driver.name, false, driver);
         }
 
         racerCount = racers.Count;
@@ -296,7 +326,7 @@ public class RaceDirector : MonoBehaviour
         state = State.Countdown;
     }
 
-    Racer Add(Transform car, string name, bool isPlayer, RaceTrack.Follower existing = null)
+    Racer Add(Transform car, string name, bool isPlayer, TrafficDriver driver = null)
     {
         Racer racer = new Racer
         {
@@ -304,9 +334,11 @@ public class RaceDirector : MonoBehaviour
             car = car.GetComponent<CarController>(),
             damage = car.GetComponent<CarDamage>(),
 
-            // Reuses the AI's own follower. The player has none, so one is made here — and that
-            // is the ONLY follower this component ever creates.
-            line = existing ?? track.Follow(car.position),
+            // The DRIVER is stored, not its follower. An AI's follower is read through it on
+            // every access, so replacing that object cannot leave this component watching a
+            // follower nobody advances. Only the player, who has no driver, gets one made here.
+            driver = driver,
+            ownLine = driver != null ? null : track.Follow(car.position),
             name = name,
             isPlayer = isPlayer,
         };
@@ -349,9 +381,9 @@ public class RaceDirector : MonoBehaviour
             // Re-acquired at the green light, not at spawn. A car that was nudged, or that
             // settled onto its springs, has moved since it was placed, and the start distance is
             // what every lap count is measured against.
-            racer.line.Snap(racer.transform.position);
-            racer.startDistance = racer.line.Distance;
-            racer.safeDistance = racer.line.Distance;
+            racer.Line.Snap(racer.transform.position);
+            racer.startDistance = racer.Line.Distance;
+            racer.safeDistance = racer.Line.Distance;
         }
 
         CountdownLeft = 0f;
@@ -368,18 +400,18 @@ public class RaceDirector : MonoBehaviour
 
             // The AI advance their own followers in their own Update. Advancing them again here
             // would be harmless but wasteful; the player's is the only one that needs it.
-            if (racer.isPlayer) racer.line.Advance(racer.transform.position);
+            if (racer.isPlayer) racer.Line.Advance(racer.transform.position);
 
             if (racer.finished) continue;
 
-            racer.progress = racer.line.Distance - racer.startDistance;
+            racer.progress = racer.Line.Distance - racer.startDistance;
 
             // A car is "safe" where it was last both on the track and the right way up. That is
             // the point a respawn goes back to — using the LIVE distance instead would put a car
             // that has driven off a dam back exactly where it drove off.
             bool upright = Vector3.Dot(racer.transform.up, Vector3.up) > 0.5f;
-            if (!racer.line.OffTrack && upright && racer.car != null && racer.car.Grounded)
-                racer.safeDistance = racer.line.Distance;
+            if (!racer.Line.OffTrack && upright && racer.car != null && racer.car.Grounded)
+                racer.safeDistance = racer.Line.Distance;
 
             if (racer.progress >= laps * track.Length) Finish(racer);
         }
@@ -442,10 +474,21 @@ public class RaceDirector : MonoBehaviour
         for (int i = 0; i < order.Count; i++)
             if (!order[i].finished) order[i].position = i + 1;
 
+        // The standings as text, because a position stuck at 1 looks identical whether the sort
+        // is wrong, the progress is wrong or the player is simply winning — and this project has
+        // already lost a session to a frozen readout that could not tell those apart.
+        //
+        // Every racer's metres are here: if the AI all sit at zero while the player climbs, the
+        // fault is their followers, not the sort.
+        standings = "";
+        for (int i = 0; i < order.Count && i < 8; i++)
+            standings += $"{i + 1}. {order[i].name} {order[i].progress:0} m   ";
+
         if (Player == null) return;
 
         playerPosition = Player.position;
         playerLap = LapOf(Player);
+        playerProgress = Player.progress;
     }
 
     /// <summary>Which lap a racer is on, 1-based and capped at the race length.</summary>
@@ -492,9 +535,9 @@ public class RaceDirector : MonoBehaviour
 
         // SetDistance, not Snap. Snap searches the whole track and RESETS the lap count, which
         // would hand a player on lap 3 a three-lap penalty for going off.
-        racer.line.SetDistance(at);
+        racer.Line.SetDistance(at);
 
-        racer.progress = racer.line.Distance - racer.startDistance;
+        racer.progress = racer.Line.Distance - racer.startDistance;
         racer.safeDistance = at;
         respawnAt = Time.unscaledTime + respawnCooldown;
     }
