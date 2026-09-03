@@ -1043,13 +1043,41 @@ along the road in driving order.
   the rendered mesh, so it works on scenery whose collider is missing, coarser than the mesh, or
   still importing — all three of which are true of a downloaded map while its racing line is being
   drawn. `Physics.Raycast` is the fallback.
-- **`placing` is static.** It has to survive the inspector being rebuilt, which happens on every
-  selection change — including the one caused by creating a waypoint. A per-instance flag switches
-  itself off after the first click.
-- **Place mode takes the default control** (`HandleUtility.AddDefaultControl`), or a click in
-  empty space clears the selection, deselects the track and ends place mode immediately.
-- **Alt/Ctrl/Shift clicks are deliberately not taken.** Alt is orbit, and stealing it makes the
-  scene view unnavigable at exactly the moment you need to move around.
+- **⚠ `AddDefaultControl` ALONE DOES NOT STOP THE SCENE VIEW SELECTING THINGS, and the failure
+  looks exactly like place mode not existing.** Shipped broken and reported straight away: every
+  click selected the road instead of adding a waypoint. **The scene view picks objects on mouse
+  UP**, so consuming only the mouse DOWN leaves the selection change to happen a moment later —
+  and that selection change tears down the custom editor, which is why it appeared to do nothing
+  at all rather than misbehaving visibly.
+
+  The fix is the full hot-control handshake every built-in tool does: claim the default control
+  during `Layout` so clicks in empty space arrive at all, take `GUIUtility.hotControl` on mouse
+  down, then release it and place the waypoint on mouse up — **consuming BOTH events**. Placing on
+  mouse up is right for a second reason, the same one a uGUI button raises `onClick` there: a
+  press that turns into a drag is someone moving the camera, not someone placing a point.
+
+- **Place mode runs from `SceneView.duringSceneGui`, NOT from the editor's `OnSceneGUI`.**
+  `OnSceneGUI` only runs while the track is selected, so if a click ever does leak through, the
+  selection moves, the editor is destroyed, and place mode vanishes with it. A global callback
+  survives that. The track being laid out is therefore a static field, which it had to be anyway:
+  an inspector is rebuilt on every selection change, including the one caused by creating a
+  waypoint, so a per-instance flag switches itself off after the first click.
+
+- **`Escape` is read from the RAW event type, not through `GetTypeForControl`.** Key events are
+  routed to whatever holds keyboard focus and this control is deliberately `FocusType.Passive`, so
+  asked that way the key never arrives and the only way out is the inspector button.
+
+- **The control id is requested unconditionally and FIRST.** Ids are handed out in call order, so
+  a conditional request shifts every later id and hands the drag to something else halfway
+  through it.
+
+- **`duringSceneGui` is unsubscribed before it is subscribed.** A domain reload can leave the
+  delegate attached with the static field already cleared, and a second subscription then handles
+  every event twice — two waypoints per click.
+
+- **Alt and right-drag are deliberately not taken.** Alt is orbit and the right button is
+  look-around; stealing either makes the scene view unnavigable at exactly the moment you need to
+  move around.
 - **New points sit 0.5 m above the surface, not on it.** A point exactly on the ground reads as
   underground to the validator on any slope, because its check-ray lands a few centimetres away on
   a face that has moved.

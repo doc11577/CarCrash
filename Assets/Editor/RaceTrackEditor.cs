@@ -27,14 +27,24 @@ using UnityEngine;
 public class RaceTrackEditor : Editor
 {
     /// <summary>
-    /// Whether clicking in the scene view adds a waypoint.
+    /// The track being laid out, or null when not placing.
     /// </summary>
     /// <remarks>
-    /// Static, so it survives the inspector being rebuilt — which happens on every selection
-    /// change, including the one caused by creating a waypoint. A per-instance flag would switch
-    /// itself off after the first click.
+    /// STATIC, and place mode does not live on the custom editor at all — it runs from
+    /// <c>SceneView.duringSceneGui</c>. Two reasons, and the second is the one that was got
+    /// wrong first time round:
+    ///
+    /// * An inspector is rebuilt on every selection change, including the one caused by creating
+    ///   a waypoint, so an instance field switches place mode off after the first click.
+    /// * <c>OnSceneGUI</c> only runs while the track is SELECTED. If a click ever does leak
+    ///   through to the scene view's own picking, the selection moves to whatever was clicked,
+    ///   the editor is torn down, and place mode disappears — which is indistinguishable from it
+    ///   never having worked. Running from the scene-view callback means it survives that.
     /// </remarks>
-    static bool placing;
+    static RaceTrack placingTrack;
+
+    /// <summary>Stable control id, so the same control is claimed on every event of a frame.</summary>
+    static readonly int PlaceHint = "RaceTrackPlace".GetHashCode();
 
     /// <summary>Metres above the surface a new waypoint is placed.</summary>
     /// <remarks>
@@ -45,6 +55,10 @@ public class RaceTrackEditor : Editor
     /// </remarks>
     const float PlaceLift = 0.5f;
 
+    static bool Placing => placingTrack != null;
+
+    // ---- inspector ---------------------------------------------------------------------------
+
     public override void OnInspectorGUI()
     {
         RaceTrack track = (RaceTrack)target;
@@ -54,24 +68,28 @@ public class RaceTrackEditor : Editor
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Laying out the track", EditorStyles.boldLabel);
 
-        // The toggle is drawn as a big obvious button rather than a checkbox, because leaving
-        // place mode on by accident means the next click in the scene view creates a waypoint
-        // instead of selecting something, and that is confusing rather than harmless.
-        GUI.backgroundColor = placing ? new Color(1f, 0.78f, 0.15f) : Color.white;
-        if (GUILayout.Button(placing
-                ? "PLACING — click the road to add a waypoint (Esc or click here to stop)"
+        bool placingThis = placingTrack == track;
+
+        // Drawn as a big obvious button rather than a checkbox, because leaving place mode on by
+        // accident means the next click in the scene view creates a waypoint instead of selecting
+        // something, and that is confusing rather than harmless.
+        GUI.backgroundColor = placingThis ? new Color(1f, 0.78f, 0.15f) : Color.white;
+        if (GUILayout.Button(placingThis
+                ? "PLACING — click the road to add a waypoint (Esc, or click here, to stop)"
                 : "Start placing waypoints",
                 GUILayout.Height(30f)))
         {
-            placing = !placing;
-            SceneView.RepaintAll();
+            if (placingThis) StopPlacing();
+            else StartPlacing(track);
         }
         GUI.backgroundColor = Color.white;
 
         EditorGUILayout.HelpBox(
             "Click along the road in the order you want to drive it. The first click is the " +
             "start/finish line. Waypoints are added at the END of the chain, so go all the way " +
-            "round and stop just before the start — the track closes the loop itself.",
+            "round and stop just before the start — the track closes the loop itself.\n\n" +
+            "While placing, a left click will NOT select anything in the scene. Alt-drag still " +
+            "orbits, and the scroll wheel still zooms.",
             MessageType.None);
 
         EditorGUILayout.Space();
@@ -110,51 +128,177 @@ public class RaceTrackEditor : Editor
         EditorGUILayout.LabelField($"{track.Count} waypoints, {track.Length:0} m a lap");
     }
 
-    void OnSceneGUI()
+    void OnDisable()
     {
-        RaceTrack track = (RaceTrack)target;
-        track.Rebuild();
+        // Selecting something else while placing is not an instruction to stop — the callback is
+        // global and survives it deliberately. But a track that has been DELETED must not leave
+        // place mode running against a destroyed object.
+        if (placingTrack == null) StopPlacing();
+    }
 
-        DrawLabels(track);
+    // ---- place mode --------------------------------------------------------------------------
 
-        if (!placing) return;
+    static void StartPlacing(RaceTrack track)
+    {
+        placingTrack = track;
 
-        Event e = Event.current;
+        // Subscribed once. Removing first is not paranoia: a domain reload during play mode can
+        // leave the delegate attached with the static field already cleared, and a second
+        // subscription would then handle every event twice — placing two waypoints per click.
+        SceneView.duringSceneGui -= OnSceneEvent;
+        SceneView.duringSceneGui += OnSceneEvent;
 
-        // Take the default control, so a click in empty space comes here instead of clearing the
-        // selection — which would deselect the track and end place mode on the first click.
-        int control = GUIUtility.GetControlID(FocusType.Passive);
-        if (e.type == EventType.Layout) HandleUtility.AddDefaultControl(control);
+        SceneView.RepaintAll();
+    }
 
-        if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape)
+    static void StopPlacing()
+    {
+        placingTrack = null;
+        SceneView.duringSceneGui -= OnSceneEvent;
+        SceneView.RepaintAll();
+    }
+
+    /// <summary>
+    /// The scene-view click handler. This is the part that has to fight uGUI's own picking.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ <c>AddDefaultControl</c> ALONE IS NOT ENOUGH, and the failure looks exactly like place
+    /// mode not existing: every click selects the road instead of adding a waypoint. The scene
+    /// view picks objects on mouse UP, so consuming only the mouse DOWN leaves the selection
+    /// change to happen a moment later — and the selection change tears down the editor, which
+    /// is why the first attempt appeared to do nothing at all rather than misbehaving visibly.
+    ///
+    /// The fix is the full hot-control handshake, which is what every built-in tool does:
+    /// claim the default control during Layout so clicks in empty space arrive here at all, take
+    /// <c>hotControl</c> on mouse down so no one else can have the drag, and release it and place
+    /// the waypoint on mouse up, consuming BOTH events.
+    ///
+    /// Placement happens on mouse UP for the same reason a uGUI button raises onClick there: a
+    /// press that turns into a drag is someone moving the camera, not someone placing a point.
+    /// </remarks>
+    static void OnSceneEvent(SceneView view)
+    {
+        if (!Placing)
         {
-            placing = false;
-            e.Use();
-            Repaint();
+            SceneView.duringSceneGui -= OnSceneEvent;
             return;
         }
 
-        // Modifier-free left click only. Alt is orbit, and stealing it makes the scene view
-        // unnavigable while placing — which is exactly when you most need to move around.
-        if (e.type != EventType.MouseDown || e.button != 0 || e.alt || e.control || e.shift) return;
+        Event e = Event.current;
 
-        Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
+        // Requested unconditionally and first, so the id is the same on every event in a frame.
+        // Control ids are handed out in call order; a conditional request shifts every later id
+        // and hands the drag to something else halfway through it.
+        int control = GUIUtility.GetControlID(PlaceHint, FocusType.Passive);
+
+        DrawOverlay(view);
+
+        // Escape is read from the RAW event type, not through GetTypeForControl. Key events are
+        // routed to whatever holds keyboard focus, and this control deliberately never takes it
+        // (FocusType.Passive) — so asked that way, the key would simply never arrive and the only
+        // way out of place mode would be the inspector button.
+        if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape)
+        {
+            StopPlacing();
+            e.Use();
+            return;
+        }
+
+        switch (e.GetTypeForControl(control))
+        {
+            case EventType.Layout:
+            case EventType.MouseMove:
+                // Makes this control the fallback for the whole view, so a click on scenery is
+                // offered here before the scene view's own object picking gets it.
+                HandleUtility.AddDefaultControl(control);
+                if (e.type == EventType.MouseMove) view.Repaint();
+                break;
+
+            case EventType.MouseDown:
+                // Alt is orbit and the right button is the look-around, and stealing either makes
+                // the scene view unnavigable at exactly the moment you need to move around.
+                if (e.button != 0 || e.alt) break;
+
+                GUIUtility.hotControl = control;
+                e.Use();
+                break;
+
+            case EventType.MouseUp:
+                if (e.button != 0 || GUIUtility.hotControl != control) break;
+
+                GUIUtility.hotControl = 0;
+                Place(placingTrack, e.mousePosition);
+                e.Use();
+                break;
+
+            case EventType.Repaint:
+                DrawPreview(e.mousePosition);
+                break;
+        }
+    }
+
+    /// <summary>A banner, so place mode is never on without saying so.</summary>
+    static void DrawOverlay(SceneView view)
+    {
+        Handles.BeginGUI();
+
+        Rect box = new Rect(10f, 10f, 320f, 46f);
+        GUI.color = new Color(0f, 0f, 0f, 0.75f);
+        GUI.Box(box, GUIContent.none);
+        GUI.color = Color.white;
+
+        GUIStyle style = new GUIStyle(EditorStyles.boldLabel)
+        {
+            normal = { textColor = new Color(1f, 0.78f, 0.15f) },
+            wordWrap = true,
+        };
+
+        int placed = placingTrack != null ? placingTrack.transform.childCount : 0;
+        GUI.Label(new Rect(box.x + 8f, box.y + 5f, box.width - 16f, box.height - 10f),
+                  $"PLACING WAYPOINTS — {placed} so far\nClick the road in driving order. " +
+                  "Esc to stop.", style);
+
+        Handles.EndGUI();
+    }
+
+    /// <summary>A marker where the next click would land, so it is not a guess.</summary>
+    static void DrawPreview(Vector2 mouse)
+    {
+        Ray ray = HandleUtility.GUIPointToWorldRay(mouse);
+        if (!Surface(ray, out Vector3 point)) return;
+
+        Handles.color = new Color(1f, 0.78f, 0.15f, 0.9f);
+        Handles.SphereHandleCap(0, point + Vector3.up * PlaceLift, Quaternion.identity, 1.6f,
+                                EventType.Repaint);
+
+        // Joined to the last waypoint, so the segment about to be created is visible before it
+        // exists — which is how a click that would double back gets noticed rather than undone.
+        if (placingTrack != null && placingTrack.transform.childCount > 0)
+        {
+            Transform last = placingTrack.transform.GetChild(placingTrack.transform.childCount - 1);
+            Handles.DrawDottedLine(last.position, point + Vector3.up * PlaceLift, 4f);
+        }
+    }
+
+    static void Place(RaceTrack track, Vector2 mouse)
+    {
+        if (track == null) return;
+
+        Ray ray = HandleUtility.GUIPointToWorldRay(mouse);
         if (!Surface(ray, out Vector3 point))
         {
             Debug.LogWarning("RaceTrack: nothing under that click to put a waypoint on.", track);
-            e.Use();
             return;
         }
 
         Add(track, point + Vector3.up * PlaceLift);
-        e.Use();
     }
 
-    /// <summary>Where a ray meets the scene, by mesh first and collider second.</summary>
+    /// <summary>Where a ray meets the scene, by rendered mesh first and collider second.</summary>
     static bool Surface(Ray ray, out Vector3 point)
     {
         // RaySnap picks against rendered geometry, so it works before colliders are generated
-        // and on scenery that has none. It returns a boxed RaycastHit or null.
+        // and on scenery that has none. It returns a boxed RaycastHit, or null for a miss.
         object hit = HandleUtility.RaySnap(ray);
         if (hit is RaycastHit snapped)
         {
@@ -172,9 +316,23 @@ public class RaceTrackEditor : Editor
         return false;
     }
 
+    // ---- labels ------------------------------------------------------------------------------
+
+    void OnSceneGUI()
+    {
+        RaceTrack track = (RaceTrack)target;
+        track.Rebuild();
+        DrawLabels(track);
+    }
+
     /// <summary>Numbers on the waypoints, which is what makes a mis-ordered chain obvious.</summary>
     static void DrawLabels(RaceTrack track)
     {
+        SceneView view = SceneView.currentDrawingSceneView;
+        if (view == null || view.camera == null) return;
+
+        Transform eye = view.camera.transform;
+
         GUIStyle style = new GUIStyle(EditorStyles.boldLabel)
         {
             normal = { textColor = Color.white },
@@ -185,20 +343,15 @@ public class RaceTrackEditor : Editor
         {
             Vector3 at = track.Point(i) + Vector3.up * 3f;
 
-            // Skip anything behind the camera, or the labels pile up in the corner of the view.
-            if (Vector3.Dot(SceneView.currentDrawingSceneView != null
-                    ? SceneView.currentDrawingSceneView.camera.transform.forward
-                    : Vector3.forward,
-                    at - (SceneView.currentDrawingSceneView != null
-                        ? SceneView.currentDrawingSceneView.camera.transform.position
-                        : Vector3.zero)) <= 0f)
-                continue;
+            // Anything behind the camera would otherwise pile its label up in one corner of the
+            // view, which on a 25-point lap is a solid block of numbers over the road.
+            if (Vector3.Dot(eye.forward, at - eye.position) <= 0f) continue;
 
             Handles.Label(at, i == 0 ? "0  START" : i.ToString(), style);
         }
     }
 
-    // ---- operations ------------------------------------------------------------------------
+    // ---- operations --------------------------------------------------------------------------
 
     static void Add(RaceTrack track, Vector3 at)
     {
@@ -225,7 +378,7 @@ public class RaceTrackEditor : Editor
     /// <summary>Puts every waypoint back on the surface under it.</summary>
     /// <remarks>
     /// The repair for the commonest mistake there is: dragging a waypoint sideways in the scene
-    /// view moves it along the view plane, so it ends up hanging in the air over the road it
+    /// view moves it along the VIEW PLANE, so it ends up hanging in the air over the road it
     /// used to sit on. That is invisible from most angles and puts a respawned car in the sky.
     /// </remarks>
     static void DropAll(RaceTrack track)
@@ -337,18 +490,18 @@ public class RaceTrackEditor : Editor
         SceneView.RepaintAll();
     }
 
-    // ---- creation --------------------------------------------------------------------------
+    // ---- creation ----------------------------------------------------------------------------
 
     [MenuItem("GameObject/CarCrash/Race Track", false, 10)]
     static void Create(MenuCommand command)
     {
         GameObject go = new GameObject("RaceTrack");
-        go.AddComponent<RaceTrack>();
+        RaceTrack track = go.AddComponent<RaceTrack>();
 
         Undo.RegisterCreatedObjectUndo(go, "Create Race Track");
         GameObjectUtility.SetParentAndAlign(go, command.context as GameObject);
         Selection.activeObject = go;
 
-        placing = true;
+        StartPlacing(track);
     }
 }
