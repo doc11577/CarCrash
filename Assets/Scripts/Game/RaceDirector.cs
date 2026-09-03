@@ -101,6 +101,10 @@ public class RaceDirector : MonoBehaviour
     [SerializeField] int playerLap;
     [SerializeField] float raceTime;
 
+    [Tooltip("Grid slot the player started from, counting from 0 at the front. Random by " +
+             "default — see TrafficSpawner.randomPlayerSlot.")]
+    [SerializeField] int gridSlot;
+
     /// <summary>One car in the race.</summary>
     public class Racer
     {
@@ -243,8 +247,12 @@ public class RaceDirector : MonoBehaviour
         {
             if (playerOnGrid && spawner != null && spawner.ReservesPlayerSlot)
             {
-                spawner.GridPose(0, out Vector3 pose, out Quaternion facing);
+                // The SPAWNER decides which slot is the player's, because the AI had to know
+                // which one to skip long before this ran. Asking it rather than choosing here is
+                // what stops two cars claiming the same square.
+                spawner.GridPose(spawner.PlayerSlot, out Vector3 pose, out Quaternion facing);
                 Place(player.transform, pose, facing);
+                gridSlot = spawner.PlayerSlot;
             }
 
             Player = Add(player.transform, "YOU", true);

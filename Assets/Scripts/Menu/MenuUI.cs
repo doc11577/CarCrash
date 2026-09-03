@@ -33,6 +33,15 @@ public class MenuUI : MonoBehaviour
 
         [Tooltip("One line under the name. Facts, not adjectives.")]
         public string blurb = "1,800 m  ·  270 m drop  ·  about 90 seconds";
+
+        [Tooltip("Show this map in DESTRUCTION mode. Turn off for a map that has a racing line " +
+                 "but no descent to bomb down.")]
+        public bool inDestruction = true;
+
+        [Tooltip("Show this map in RACE mode. Turn ON only for maps that actually have a " +
+                 "RaceTrack laid out — a race on a map with no track drops the player into a " +
+                 "scene where nothing moves and nothing says why.")]
+        public bool inRace;
     }
 
     /// <summary>
@@ -280,41 +289,107 @@ public class MenuUI : MonoBehaviour
         Show(Page.Maps);
     }
 
+    /// <summary>
+    /// The map list, which is now REBUILT on every visit because it depends on the mode.
+    /// </summary>
+    /// <remarks>
+    /// The other pages are built once in Awake and refreshed in place, which is right for content
+    /// whose SHAPE never changes. This one's does: race mode offers only maps with a racing line
+    /// laid out, so the number of buttons — and therefore the whole band layout — differs between
+    /// visits. Refreshing labels in place cannot express that, so the rows are torn down and
+    /// rebuilt.
+    ///
+    /// Only the rows are rebuilt. The heading and the BACK button are part of the page and are
+    /// built once, which keeps the reconstruction to the part that actually varies.
+    /// </remarks>
     GameObject BuildMaps()
     {
         GameObject page = NewPage("Maps");
 
-        UiKit.Text(page.transform, "SELECT MAP", 64f, UiKit.Ink,
-                   TextAlignmentOptions.Center, new Vector2(0f, 320f), new Vector2(1200f, 90f))
-             .fontStyle = FontStyles.Bold;
+        mapHeading = UiKit.Text(page.transform, "SELECT MAP", 64f, UiKit.Ink,
+                                TextAlignmentOptions.Center,
+                                new Vector2(0f, 320f), new Vector2(1200f, 90f));
+        mapHeading.fontStyle = FontStyles.Bold;
 
-        // Same band treatment as the garage. Map select has not clipped yet because there are
-        // only two maps, but it is the identical fixed-step layout and would run its fourth
-        // map's blurb into the BACK button. Fixed here rather than waiting for it to happen.
-        UiKit.ListBand band = UiKit.Band(top: 201f, bottom: -300f, count: maps.Length,
+        // Rows go in their own container so clearing them cannot take the heading or the BACK
+        // button with them.
+        GameObject rows = new GameObject("Rows", typeof(RectTransform));
+        rows.transform.SetParent(page.transform, false);
+
+        RectTransform rect = (RectTransform)rows.transform;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+        mapRows = rect;
+
+        mapEmpty = UiKit.Text(page.transform, "", 26f, UiKit.Muted,
+                              TextAlignmentOptions.Center,
+                              new Vector2(0f, 40f), new Vector2(900f, 120f));
+
+        UiKit.Button(page.transform, "BACK", new Vector2(0f, -380f), new Vector2(280f, 62f),
+                     () => Show(Page.Modes));
+
+        return page;
+    }
+
+    RectTransform mapRows;
+    TextMeshProUGUI mapHeading;
+    TextMeshProUGUI mapEmpty;
+    readonly List<MapChoice> shownMaps = new List<MapChoice>();
+
+    void RefreshMaps()
+    {
+        if (mapRows == null) return;
+
+        for (int i = mapRows.childCount - 1; i >= 0; i--)
+            Destroy(mapRows.GetChild(i).gameObject);
+
+        bool race = GameSelection.IsRace;
+
+        shownMaps.Clear();
+        foreach (MapChoice map in maps)
+        {
+            if (map == null) continue;
+            if (race ? map.inRace : map.inDestruction) shownMaps.Add(map);
+        }
+
+        if (mapHeading != null) mapHeading.text = race ? "SELECT TRACK" : "SELECT MAP";
+
+        // A mode with nothing to play must SAY so. An empty page with a BACK button reads as the
+        // menu being broken, which is the same argument as the garage's action button changing
+        // meaning rather than greying out.
+        if (mapEmpty != null)
+        {
+            mapEmpty.text = shownMaps.Count > 0
+                ? ""
+                : race
+                    ? "No tracks yet — no map has a racing line laid out."
+                    : "No maps are set for destruction.";
+        }
+
+        if (shownMaps.Count == 0) return;
+
+        // Same band treatment as the garage: a fixed vertical band divided by however many rows
+        // there are, rather than a fixed step that is only correct for the count it was written
+        // against. That matters more here now the count changes with the mode.
+        UiKit.ListBand band = UiKit.Band(top: 201f, bottom: -300f, count: shownMaps.Count,
                                          maxSlot: 130f, padding: 48f, maxHeight: 82f);
 
-        for (int i = 0; i < maps.Length; i++)
+        for (int i = 0; i < shownMaps.Count; i++)
         {
-            MapChoice map = maps[i];
-            if (map == null) continue;
-
+            MapChoice map = shownMaps[i];
             float y = band.Centre(i);
 
-            UiKit.Button(page.transform, map.displayName, new Vector2(0f, y),
+            UiKit.Button(mapRows, map.displayName, new Vector2(0f, y),
                          new Vector2(660f, band.height), () => ChooseMap(map),
                          fontSize: band.fontSize);
 
-            UiKit.Text(page.transform, map.blurb, 24f, UiKit.Muted,
+            UiKit.Text(mapRows, map.blurb, 24f, UiKit.Muted,
                        TextAlignmentOptions.Center,
                        new Vector2(0f, y - band.height * 0.5f - 18f),
                        new Vector2(660f, 32f));
         }
-
-        UiKit.Button(page.transform, "BACK", new Vector2(0f, -380f), new Vector2(280f, 62f),
-                     () => Show(Page.Main));
-
-        return page;
     }
 
     /// <summary>
@@ -788,6 +863,7 @@ public class MenuUI : MonoBehaviour
         // wallet, ownership and dev mode while every page already exists.
         if (page == Page.Main) RefreshMain();
         if (page == Page.Modes) RefreshMode();
+        if (page == Page.Maps) RefreshMaps();
         if (page == Page.Cars) RefreshCars();
         if (page == Page.Options) RefreshSave();
         if (page != Page.Options) DisarmReset();

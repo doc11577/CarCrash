@@ -80,13 +80,17 @@ public class RaceHud : MonoBehaviour
     {
         RectTransform screen = UiKit.Screen(transform, "RaceHud", order: 90);
 
+        // TOP LEFT. ScoreHud's GEARS counter is anchored top-right and is on screen during a race
+        // as well, so the two overlapped — the position sat straight on top of the gear count.
+        // The two HUDs are separate components by design, which means neither can see the other's
+        // layout and the corners have to be divided up by hand.
         position = Label(screen, "Position", positionSize, UiKit.Ink,
-                         new Vector2(1f, 1f), new Vector2(-40f, -34f), TextAlignmentOptions.TopRight);
+                         new Vector2(0f, 1f), new Vector2(40f, -34f), TextAlignmentOptions.TopLeft);
         position.fontStyle = FontStyles.Bold;
 
         lap = Label(screen, "Lap", lapSize, UiKit.Muted,
-                    new Vector2(1f, 1f), new Vector2(-40f, -34f - positionSize),
-                    TextAlignmentOptions.TopRight);
+                    new Vector2(0f, 1f), new Vector2(40f, -34f - positionSize),
+                    TextAlignmentOptions.TopLeft);
 
         countdown = Label(screen, "Countdown", countdownSize, UiKit.Accent,
                           new Vector2(0.5f, 0.5f), new Vector2(0f, 60f), TextAlignmentOptions.Center);

@@ -50,6 +50,23 @@ public class TrafficSpawner : MonoBehaviour
     [Tooltip("Metres behind the start/finish line the FRONT row sits, when racing.")]
     public float gridSetback = 18f;
 
+    [Tooltip("Draw the player's grid slot at random instead of always giving them pole. Starting " +
+             "at the front means the race is won by driving away from everyone, which is the " +
+             "least interesting version of it — from the middle of the pack there is something " +
+             "to do on the first lap.")]
+    public bool randomPlayerSlot = true;
+
+    /// <summary>
+    /// The grid slot held for the player. The race director reads this to place them.
+    /// </summary>
+    /// <remarks>
+    /// Decided HERE rather than by the director, because the AI have to know which slot to skip
+    /// and they are spawned in this component's Start — long before the director gathers the
+    /// field on its first Update. Two places choosing it means two cars in one slot, and the
+    /// failure is a physics explosion at the green light that reads as a bug in the cars.
+    /// </remarks>
+    public int PlayerSlot { get; private set; }
+
     [Header("Grid")]
     [Tooltip("Where the grid is laid out. Leave empty to use this GameObject's transform. " +
              "Put it in the start bay, behind and beside where the player spawns.\n\n" +
@@ -139,11 +156,18 @@ public class TrafficSpawner : MonoBehaviour
 
         Transform origin = grid != null ? grid : transform;
 
-        // Offset past the player's slot when racing, so the two grids cannot overlap.
-        int first = ReservesPlayerSlot ? 1 : 0;
+        // The grid is count + 1 slots when the player is on it. Their slot is drawn from the
+        // same seeded generator as the car mix, so a seeded run reproduces the whole grid rather
+        // than half of it.
+        PlayerSlot = ReservesPlayerSlot && randomPlayerSlot ? mix.Next(count + 1) : 0;
 
+        int slot = 0;
         for (int i = 0; i < count; i++)
-            Spawn(origin, first + i);
+        {
+            if (ReservesPlayerSlot && slot == PlayerSlot) slot++;
+            Spawn(origin, slot);
+            slot++;
+        }
 
         spawned = count;
     }
@@ -269,11 +293,16 @@ public class TrafficSpawner : MonoBehaviour
         Transform origin = grid != null ? grid : transform;
         if (raceTrack != null) raceTrack.Rebuild();
 
-        Gizmos.color = new Color(1f, 0.78f, 0.15f, 0.9f);
-        for (int i = 0; i < count; i++)
+        // count + 1 when the player is on the grid, or the scene view shows a grid one car
+        // shorter than the one the race actually forms — and the missing square is the one most
+        // worth looking at, since it is the only one not laid out by this component.
+        int slots = count + (ReservesPlayerSlot ? 1 : 0);
+
+        for (int i = 0; i < slots; i++)
         {
             GridSlot(origin, i, out Vector3 at, out Quaternion facing);
 
+            Gizmos.color = new Color(1f, 0.78f, 0.15f, 0.9f);
             Gizmos.DrawWireCube(at + Vector3.up * 0.6f, new Vector3(1.7f, 1.2f, 4.2f));
             Gizmos.DrawLine(at, at + facing * Vector3.forward * 3f);
         }

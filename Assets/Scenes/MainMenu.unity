@@ -342,18 +342,26 @@ MonoBehaviour:
     displayName: Quarry Descent
     sceneName: Quarry
     blurb: "1,800 m  \xB7  270 m drop  \xB7  about 90 seconds"
+    inDestruction: 1
+    inRace: 0
   - id: Everest
     displayName: Everest Descent
     sceneName: Everest
     blurb: "2,000 m \xB7 1,400 m drop \xB7 35\xB0 average"
+    inDestruction: 1
+    inRace: 0
   - id: bullseye
     displayName: Bullseye
     sceneName: Bullseye
     blurb: "620 m \xB7 230 m drop \xB7 land on the gold"
+    inDestruction: 1
+    inRace: 0
   - id: TheDam
     displayName: The Dam
     sceneName: TheDam
-    blurb: "Circut \xB7 Solo "
+    blurb: 3 laps - 8 cars - canyon circuit
+    inDestruction: 0
+    inRace: 1
   roster: {fileID: 11400000, guid: d2c20dc4353d8a4429439e0ac46751d1, type: 2}
   minimumLoadTime: 0.4
 --- !u!4 &618861122

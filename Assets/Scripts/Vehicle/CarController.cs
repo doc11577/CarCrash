@@ -200,6 +200,11 @@ public class CarController : MonoBehaviour
     /// </remarks>
     public bool Frozen { get; set; }
 
+    [Tooltip("How hard a FROZEN car is held against rolling, in m/s². Only used during a race " +
+             "countdown. It has to beat gravity along the steepest grid you will ever lay out: " +
+             "a 30 degree slope pulls at 4.9 m/s², so 25 has a wide margin.")]
+    public float holdDeceleration = 25f;
+
     /// <summary>Forward speed in metres per second. Negative when reversing.</summary>
     public float ForwardSpeed { get; private set; }
 
@@ -331,6 +336,35 @@ public class CarController : MonoBehaviour
         {
             ApplyAirControl(throttle, steerWish);
         }
+
+        if (Frozen) HoldStill(dt);
+    }
+
+    /// <summary>Bleeds off any movement across the ground while the car is held.</summary>
+    /// <remarks>
+    /// ⚠ THE HANDBRAKE IS NOT A BRAKE IN THIS CONTROLLER. It multiplies the REAR tyres' LATERAL
+    /// grip by <see cref="handbrakeGrip"/> so the back steps out — it applies no braking force
+    /// at all. So freezing a car by holding the handbrake left it free to roll, and on a grid
+    /// with any gradient at all the whole field crept backwards through the countdown.
+    ///
+    /// HORIZONTAL ONLY. Damping the full velocity would fight the suspension and leave a car
+    /// spawned above the grid hanging in the air, since it is dropped onto its wheels and has to
+    /// settle. Vertical motion is left entirely alone; only movement across the ground is taken
+    /// away, which is what a car standing on its brakes actually does.
+    ///
+    /// A damping rate rather than a hard zero, because zeroing velocity every step stops a car
+    /// dead in mid-collision too — a nudge from behind on the grid would be absorbed silently
+    /// instead of shoving the car, which looks like the world is made of glue.
+    /// </remarks>
+    void HoldStill(float dt)
+    {
+        Vector3 velocity = rb.linearVelocity;
+        Vector3 across = new Vector3(velocity.x, 0f, velocity.z);
+
+        across = Vector3.MoveTowards(across, Vector3.zero, holdDeceleration * dt);
+        rb.linearVelocity = new Vector3(across.x, velocity.y, across.z);
+
+        rb.angularVelocity = Vector3.MoveTowards(rb.angularVelocity, Vector3.zero, 6f * dt);
     }
 
     /// <summary>
