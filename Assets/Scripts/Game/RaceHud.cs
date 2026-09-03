@@ -37,6 +37,9 @@ public class RaceHud : MonoBehaviour
     [Tooltip("Size of the finish banner and the results list.")]
     public float resultSize = 34f;
 
+    [Tooltip("Size of the live DRIFT counter.")]
+    public float driftSize = 46f;
+
     [Tooltip("Seconds the GO! stays up after the green light.")]
     public float goHold = 1.1f;
 
@@ -66,11 +69,13 @@ public class RaceHud : MonoBehaviour
     TextMeshProUGUI lap;
     TextMeshProUGUI countdown;
     TextMeshProUGUI result;
+    TextMeshProUGUI drift;
 
     readonly StringBuilder builder = new StringBuilder(256);
     float greenAt = -1f;
     int shownPosition = -1;
     int shownLap = -1;
+    int shownDrift = -1;
 
     void Start()
     {
@@ -118,6 +123,13 @@ public class RaceHud : MonoBehaviour
         countdown = Label(screen, "Countdown", countdownSize, UiKit.Accent,
                           new Vector2(0.5f, 0.5f), new Vector2(0f, 60f), TextAlignmentOptions.Center);
         countdown.fontStyle = FontStyles.Bold;
+
+        // Below centre, clear of ScoreHud's airtime counter, which sits ABOVE centre. Both climb
+        // live and neither is readable stacked on the other.
+        drift = Label(screen, "Drift", driftSize, new Color(1f, 0.55f, 0.25f),
+                      new Vector2(0.5f, 0.5f), new Vector2(0f, -150f), TextAlignmentOptions.Center);
+        drift.fontStyle = FontStyles.Bold;
+        drift.enabled = false;
 
         result = Label(screen, "Result", resultSize, UiKit.Ink,
                        new Vector2(0.5f, 0.5f), new Vector2(0f, 0f), TextAlignmentOptions.Center);
@@ -170,6 +182,7 @@ public class RaceHud : MonoBehaviour
             case RaceDirector.State.Racing:
                 DrawGo();
                 DrawStandings();
+                DrawDrift();
                 break;
 
             case RaceDirector.State.Finished:
@@ -232,6 +245,39 @@ public class RaceHud : MonoBehaviour
         shownLap = onLap;
         lap.text = $"LAP {Big}{onLap}</color></size><size={SmallPercent}%>{Faint}/" +
                    $"{race.Laps}</color></size>";
+    }
+
+    /// <summary>The live drift counter, climbing while the slide lasts.</summary>
+    /// <remarks>
+    /// The whole point of banking a drift on exit is that the player watches the number climb
+    /// while the outcome is still in doubt, so it has to be on screen while it is climbing. Same
+    /// argument, and the same shape, as ScoreHud's airtime counter — which is why this one is
+    /// deliberately BELOW centre, since that one is above it.
+    ///
+    /// SetText with a placeholder rather than concatenation: this runs every frame of every
+    /// drift, and building a string each time would allocate on all of them.
+    /// </remarks>
+    void DrawDrift()
+    {
+        bool show = race.Drifting && race.DriftGears > 0;
+
+        if (!show)
+        {
+            if (drift.enabled) drift.enabled = false;
+            return;
+        }
+
+        if (!drift.enabled) drift.enabled = true;
+
+        int gears = race.DriftGears;
+        if (gears == shownDrift) return;
+
+        shownDrift = gears;
+        drift.SetText("DRIFT  +{0}", gears);
+
+        // Swells as the combo grows, so a long chain reads as building rather than as a number
+        // that happens to be larger. Capped, or a very long drift fills the screen.
+        drift.fontSize = driftSize * Mathf.Min(1.6f, 1f + gears / 400f);
     }
 
     void DrawResult()

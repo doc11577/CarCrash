@@ -49,6 +49,24 @@ public class RaceDirector : MonoBehaviour
              "destruction map and wrong for a race.")]
     public bool playerOnGrid = true;
 
+    [Header("Arcade handling — applied to every racer at the start")]
+    [Tooltip("Switch the arcade assists on for a race. Off leaves every car exactly as a " +
+             "destruction run drives it, which is the right comparison when something feels " +
+             "wrong and you want to know whether the assists are the cause.")]
+    public bool arcadeHandling = true;
+
+    [Tooltip("Righting torque, in m/s². Past its dead zone this is what makes a race car almost " +
+             "never end up on its roof. Cornering lean is untouched — see CarController.")]
+    public float uprightTorque = 11f;
+
+    [Tooltip("How hard rotation the steering did not ask for is cancelled, 0-1. This is the " +
+             "anti-spin. It only ever subtracts, so drifting still works.")]
+    [Range(0f, 1f)] public float antiSpin = 0.65f;
+
+    [Tooltip("Multiplies air control torque and the spin it may build. Above 1 gives the loose, " +
+             "steerable air a stunt racer wants.")]
+    public float airControlScale = 2.2f;
+
     [Header("Respawn")]
     [Tooltip("Key that puts the car back on the track. In a race this REPLACES the restart — " +
              "reloading the scene would throw away everyone else's race as well as your own.")]
@@ -93,6 +111,34 @@ public class RaceDirector : MonoBehaviour
     [Tooltip("Seconds after taking damage that near misses stop paying. A pass that ends in a " +
              "collision was a collision.")]
     public float nearMissGrace = 0.6f;
+
+    [Header("Drifting")]
+    [Tooltip("Gears per second of drift, at the best angle. Scaled by how sideways the car is " +
+             "and by speed, so a lazy slide pays little and a committed one pays properly.")]
+    public float driftGearsPerSecond = 55f;
+
+    [Tooltip("Sideslip in degrees before it counts as a drift at all. Below this it is just " +
+             "cornering, and paying for that would pay for driving normally.")]
+    public float driftMinAngle = 14f;
+
+    [Tooltip("Sideslip at which the drift is worth full rate. Past it the payout stops rising, " +
+             "so there is nothing to gain from spinning.")]
+    public float driftBestAngle = 42f;
+
+    [Tooltip("Sideslip past which the car is spinning rather than drifting and the drift ends.")]
+    public float driftMaxAngle = 78f;
+
+    [Tooltip("Minimum speed for a drift to count, in m/s. Sliding at walking pace is not a drift.")]
+    public float driftMinSpeed = 11f;
+
+    [Tooltip("Seconds the car may straighten up or leave the ground without the drift ending. " +
+             "This is what CHAINS corners together — a flick from one drift into the next stays " +
+             "one combo rather than banking twice.")]
+    public float driftGrace = 0.65f;
+
+    [Tooltip("Gears below which a finished drift raises no popup, so a twitch does not litter " +
+             "the screen.")]
+    public int driftMinPayout = 15;
 
     [Header("Read-only — watch these in play mode")]
     [SerializeField] State state = State.Forming;
@@ -144,9 +190,6 @@ public class RaceDirector : MonoBehaviour
         public RaceTrack.Follower Line => driver != null && driver.Line != null
             ? driver.Line
             : ownLine;
-
-        /// <summary>Follower distance at the green light, so grid position does not skew laps.</summary>
-        public float startDistance;
 
         /// <summary>Metres of track covered since the green light.</summary>
         public float progress;
@@ -247,6 +290,7 @@ public class RaceDirector : MonoBehaviour
         UpdateRespawn();
         UpdateSpeedBonus();
         UpdateNearMisses();
+        UpdateDrift();
     }
 
     // ---- forming -------------------------------------------------------------------------
@@ -318,6 +362,16 @@ public class RaceDirector : MonoBehaviour
             // Wheels stay on for the whole race. Set here rather than on the prefabs, because
             // the same prefabs are used by destruction mode, where losing a wheel is the point.
             if (racer.damage != null) racer.damage.protectWheels = true;
+
+            // Arcade handling, applied to the WHOLE FIELD rather than to the player. An AI that
+            // rolls over on a kerb the player cannot roll on is not seven opponents, it is seven
+            // obstacles — and the standings would be decided by which AI survived rather than by
+            // which drove well.
+            if (!arcadeHandling || racer.car == null) continue;
+
+            racer.car.uprightTorque = uprightTorque;
+            racer.car.antiSpin = antiSpin;
+            racer.car.airControlScale = airControlScale;
         }
 
         if (Player != null && Player.damage != null) Player.damage.Damaged += OnPlayerDamaged;
@@ -378,11 +432,19 @@ public class RaceDirector : MonoBehaviour
         {
             if (racer.car != null) racer.car.Frozen = false;
 
-            // Re-acquired at the green light, not at spawn. A car that was nudged, or that
-            // settled onto its springs, has moved since it was placed, and the start distance is
-            // what every lap count is measured against.
+            // Re-acquired at the green light, not at spawn: a car has settled on its springs and
+            // may have been nudged since it was placed.
             racer.Line.Snap(racer.transform.position);
-            racer.startDistance = racer.Line.Distance;
+
+            // ⚠ THE GRID IS BEHIND THE START LINE, WHICH PROJECTS ONTO THE LAST SEGMENT — so a
+            // car on the grid reads as being nearly a whole lap AHEAD rather than a few metres
+            // behind. Put those cars on lap -1, so the whole field shares one increasing
+            // coordinate with the start line at zero and the grid at small negative numbers.
+            //
+            // This is what makes position a comparison at all. See UpdateProgress.
+            if (racer.Line.LapFraction > 0.5f)
+                racer.Line.SetDistance(racer.Line.LapDistance - track.Length);
+
             racer.safeDistance = racer.Line.Distance;
         }
 
@@ -404,7 +466,16 @@ public class RaceDirector : MonoBehaviour
 
             if (racer.finished) continue;
 
-            racer.progress = racer.Line.Distance - racer.startDistance;
+            // ⚠ ABSOLUTE TRACK DISTANCE, NOT DISTANCE TRAVELLED. This used to be measured from
+            // each car's OWN grid slot, which is a different quantity and ranks the field wrongly:
+            // a car that started on the back row and has drawn level with one from the front row
+            // has travelled further, so it read as being AHEAD of a car it is sitting beside.
+            //
+            // Reported as the position "changing at the wrong time, sometimes too early" — which
+            // is exactly what a ranking that is right about the wrong thing looks like. Position
+            // is who is furthest round the track, full stop, and every racer now measures it
+            // against the same origin: the start line.
+            racer.progress = racer.Line.Distance;
 
             // A car is "safe" where it was last both on the track and the right way up. That is
             // the point a respawn goes back to — using the LIVE distance instead would put a car
@@ -413,7 +484,7 @@ public class RaceDirector : MonoBehaviour
             if (!racer.Line.OffTrack && upright && racer.car != null && racer.car.Grounded)
                 racer.safeDistance = racer.Line.Distance;
 
-            if (racer.progress >= laps * track.Length) Finish(racer);
+            if (LapsDone(racer) >= laps) Finish(racer);
         }
     }
 
@@ -491,12 +562,23 @@ public class RaceDirector : MonoBehaviour
         playerProgress = Player.progress;
     }
 
-    /// <summary>Which lap a racer is on, 1-based and capped at the race length.</summary>
-    public int LapOf(Racer racer)
+    /// <summary>
+    /// Whole laps a racer has completed since the start line.
+    /// </summary>
+    /// <remarks>
+    /// Falls straight out of the common coordinate: the grid sits at a small NEGATIVE distance,
+    /// so the floor is -1 on the grid, 0 from the first crossing of the line, 1 from the second,
+    /// and the race ends when it reaches the lap count. Nothing needs to know where a car
+    /// started, which is the property the old per-car origin lacked.
+    /// </remarks>
+    public int LapsDone(Racer racer)
     {
-        if (track == null || track.Length < 1f) return 1;
-        return Mathf.Clamp(Mathf.FloorToInt(racer.progress / track.Length) + 1, 1, laps);
+        if (track == null || track.Length < 1f) return 0;
+        return Mathf.Max(0, Mathf.FloorToInt(racer.progress / track.Length));
     }
+
+    /// <summary>Which lap a racer is ON, 1-based and capped at the race length.</summary>
+    public int LapOf(Racer racer) => Mathf.Clamp(LapsDone(racer) + 1, 1, laps);
 
     // ---- respawn -------------------------------------------------------------------------
 
@@ -537,7 +619,7 @@ public class RaceDirector : MonoBehaviour
         // would hand a player on lap 3 a three-lap penalty for going off.
         racer.Line.SetDistance(at);
 
-        racer.progress = racer.Line.Distance - racer.startDistance;
+        racer.progress = racer.Line.Distance;
         racer.safeDistance = at;
         respawnAt = Time.unscaledTime + respawnCooldown;
     }
@@ -570,7 +652,100 @@ public class RaceDirector : MonoBehaviour
     void OnPlayerDamaged(CarDamage source, float damage, Vector3 at, bool sustained, bool byPlayer)
     {
         lastPlayerDamage = Time.time;
+
+        // A drift that ends in the wall was not a drift. Asphalt cancels the bank on contact and
+        // it is the right call: without it the cheapest way to earn is to slide into scenery,
+        // which is the opposite of the skill the mechanic is there to reward.
+        DropDrift();
     }
+
+    // ---- drifting ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// Sideways, on purpose, pays — banked when the slide ends rather than while it lasts.
+    /// </summary>
+    /// <remarks>
+    /// Modelled on Asphalt 8, which is the reference Ethan asked for. Three properties are what
+    /// make it feel like that game rather than like a slip-angle readout:
+    ///
+    ///   * IT CHAINS. <see cref="driftGrace"/> lets the car straighten, or leave the ground,
+    ///     without ending the drift — so flicking out of one corner and into the next is ONE
+    ///     combo that keeps climbing, which is where the drama is.
+    ///   * IT IS BANKED ON EXIT, not paid continuously. The counter climbing while the outcome is
+    ///     still in doubt is the tension; the same argument as airtime, and the same reason a
+    ///     jump that ends in a ravine pays nothing.
+    ///   * IT IS LOST ON CONTACT. See OnPlayerDamaged.
+    ///
+    /// The angle term is the honest part of the scoring: a lazy 15-degree slide earns almost
+    /// nothing and a committed 40-degree one earns full rate, but past <see cref="driftBestAngle"/>
+    /// there is no more to gain — so there is never a reason to spin.
+    /// </remarks>
+    void UpdateDrift()
+    {
+        if (Player == null || Player.finished || Player.car == null) return;
+        if (RunScore.Instance == null) return;
+
+        float slip = Mathf.Abs(Player.car.Sideslip);
+
+        bool sliding = Player.car.Grounded
+                       && Player.car.Speed >= driftMinSpeed
+                       && slip >= driftMinAngle
+                       && slip <= driftMaxAngle;
+
+        if (sliding)
+        {
+            driftStraightFor = 0f;
+
+            // Angle and speed both matter. Speed is capped at the car's own top speed so a
+            // faster car does not simply earn more for the same manoeuvre.
+            float quality = Mathf.InverseLerp(driftMinAngle, driftBestAngle, slip);
+            float pace = Mathf.Clamp01(Player.car.Speed / Mathf.Max(1f, Player.car.topSpeed));
+
+            driftCredit += driftGearsPerSecond * quality * (0.4f + 0.6f * pace) * Time.deltaTime;
+            driftTime += Time.deltaTime;
+            return;
+        }
+
+        if (driftCredit <= 0f) return;
+
+        // Straightened, slowed, spun or landed. The grace is what chains corners together, so
+        // this only banks once the car has genuinely stopped drifting.
+        driftStraightFor += Time.deltaTime;
+        if (driftStraightFor < driftGrace) return;
+
+        BankDrift();
+    }
+
+    void BankDrift()
+    {
+        int gears = Mathf.FloorToInt(driftCredit);
+        driftCredit = 0f;
+        driftTime = 0f;
+        driftStraightFor = 0f;
+
+        if (gears < driftMinPayout || Player == null || Player.transform == null) return;
+
+        RunScore.Instance.Award(gears, $"DRIFT  +{gears}", Player.transform.position,
+                                new Color(1f, 0.55f, 0.25f), gears >= driftMinPayout * 6);
+    }
+
+    /// <summary>Throws away an unbanked drift. Called when the player hits something.</summary>
+    void DropDrift()
+    {
+        driftCredit = 0f;
+        driftTime = 0f;
+        driftStraightFor = 0f;
+    }
+
+    /// <summary>Gears the current drift is worth so far. For a live HUD counter.</summary>
+    public int DriftGears => Mathf.FloorToInt(driftCredit);
+
+    /// <summary>True while a drift is worth showing on screen.</summary>
+    public bool Drifting => driftCredit > 0f && driftStraightFor < driftGrace;
+
+    float driftCredit;
+    float driftTime;
+    float driftStraightFor;
 
     /// <summary>
     /// Pays for going past another car closely and cleanly.

@@ -205,6 +205,44 @@ public class CarController : MonoBehaviour
              "a 30 degree slope pulls at 4.9 m/s², so 25 has a wide margin.")]
     public float holdDeceleration = 25f;
 
+    /// <summary>Degrees between where the car POINTS and where it is actually going.</summary>
+    /// <remarks>
+    /// Signed, positive when the tail has stepped out to the left. Published because three
+    /// separate things want it — the AI's slide catch computes its own today, the drift scoring
+    /// needs it, and the anti-spin assist below is defined in terms of it. One measurement beats
+    /// three that can disagree.
+    /// </remarks>
+    public float Sideslip { get; private set; }
+
+    [Header("Arcade assist — OFF by default, switched on for a race")]
+    [Tooltip("Torque toward upright, in multiples of the car's mass. 0 is off, which is what a " +
+             "destruction map wants — rolling the car is the point there.\n\n" +
+             "This is what makes a race car 'almost never roll over'. It does nothing until the " +
+             "car is past Upright Dead Zone, so ordinary body roll through a corner is untouched " +
+             "and only a car genuinely going over is hauled back.")]
+    public float uprightTorque;
+
+    [Tooltip("Degrees of lean the upright assist ignores. Below this the car is cornering; above " +
+             "it, it is falling over. Too low and the car feels magnetically glued flat, which " +
+             "reads as stiff rather than stable.")]
+    public float uprightDeadZone = 28f;
+
+    [Tooltip("How hard EXCESS yaw is cancelled, 0-1. This is the anti-spin: it removes the part " +
+             "of the car's rotation that the steering did not ask for, so a slide stays a slide " +
+             "and does not become a pirouette.\n\n" +
+             "⚠ IT ONLY EVER SUBTRACTS. Yaw the driver asked for is left alone, so the car still " +
+             "turns in and can still be drifted deliberately — it just cannot keep rotating past " +
+             "the angle that was demanded.")]
+    [Range(0f, 1f)] public float antiSpin;
+
+    [Tooltip("Sideslip in degrees past which the anti-spin starts acting. Below it the car is " +
+             "cornering normally and a correction would fight the driver.")]
+    public float antiSpinAngle = 32f;
+
+    [Tooltip("Multiplies air control torque and the spin it may build. Above 1 gives the loose, " +
+             "steerable air a stunt racer wants; 1 is the measured, heavier destruction feel.")]
+    public float airControlScale = 1f;
+
     /// <summary>Forward speed in metres per second. Negative when reversing.</summary>
     public float ForwardSpeed { get; private set; }
 
@@ -327,17 +365,99 @@ public class CarController : MonoBehaviour
         // and giving it air damping would leave it spinning freely against the scenery.
         rb.angularDamping = Touching ? groundedAngularDamping : airAngularDamping;
 
+        UpdateSideslip();
+
         if (Grounded)
         {
             ApplyDownforce();
             ApplyTurnAssist();
+            ApplyAntiSpin();
         }
         else
         {
             ApplyAirControl(throttle, steerWish);
         }
 
+        ApplyUpright();
+
         if (Frozen) HoldStill(dt);
+    }
+
+    void UpdateSideslip()
+    {
+        Vector3 flat = Vector3.ProjectOnPlane(rb.linearVelocity, Vector3.up);
+
+        // Below walking pace the direction of travel is noise, not a slide. Same guard the AI
+        // uses, for the same reason: a parked car's velocity points nowhere in particular.
+        Sideslip = flat.magnitude > 2f
+            ? Vector3.SignedAngle(Vector3.ProjectOnPlane(transform.forward, Vector3.up),
+                                  flat, Vector3.up)
+            : 0f;
+    }
+
+    /// <summary>Cancels rotation the steering never asked for.</summary>
+    /// <remarks>
+    /// The arcade half of "low chance of spinning out". A car that has started to rotate faster
+    /// than its steering implies is on its way round, and past a point no amount of counter-steer
+    /// recovers it — which is realistic and, in a race against seven cars, mostly just annoying.
+    ///
+    /// ⚠ IT ONLY EVER SUBTRACTS, and that is what keeps drifting possible. The yaw the driver
+    /// asked for is untouched; only the EXCESS beyond it is damped, and only past
+    /// <see cref="antiSpinAngle"/> of sideslip. So the car still steps out and can be held
+    /// sideways deliberately — it just will not keep rotating on its own once it does.
+    ///
+    /// Scaled by how far past the angle it is, so the assist arrives gradually. A hard switch at
+    /// a threshold reads as the car hitting an invisible wall mid-slide.
+    /// </remarks>
+    void ApplyAntiSpin()
+    {
+        if (antiSpin <= 0f) return;
+
+        float slip = Mathf.Abs(Sideslip);
+        if (slip < antiSpinAngle) return;
+
+        float yaw = Vector3.Dot(rb.angularVelocity, transform.up);
+
+        // What the steering geometry asks for, same model the turn assist uses.
+        float speedTerm = wheelbase + understeer * ForwardSpeed * ForwardSpeed;
+        float wanted = ForwardSpeed * Mathf.Tan(steerAngle * Mathf.Deg2Rad)
+                       / Mathf.Max(0.5f, speedTerm);
+
+        float excess = yaw - wanted;
+
+        // Only when the car is rotating FURTHER into the slide than asked. Damping the other
+        // direction would fight a driver catching it.
+        if (excess * yaw <= 0f) return;
+
+        float strength = antiSpin * Mathf.Clamp01((slip - antiSpinAngle) / 30f);
+        rb.AddTorque(transform.up * (-excess * strength * 8f), ForceMode.Acceleration);
+    }
+
+    /// <summary>Rights the car when it is genuinely going over.</summary>
+    /// <remarks>
+    /// Dead-zoned rather than continuous. Below <see cref="uprightDeadZone"/> the car is
+    /// cornering and the lean is wanted — this project spent a long time getting the body to
+    /// roll OUT of a turn correctly and an always-on righting torque would flatten all of it.
+    /// Past the dead zone the car is on its way onto its roof, and in a race that is a retirement
+    /// rather than a spectacle.
+    ///
+    /// Applied as an acceleration so it is mass-independent: the 3,000 kg truck rights itself at
+    /// the same rate as the 1,200 kg E30 rather than three times more slowly.
+    /// </remarks>
+    void ApplyUpright()
+    {
+        if (uprightTorque <= 0f) return;
+
+        float tilt = Vector3.Angle(transform.up, Vector3.up);
+        if (tilt < uprightDeadZone) return;
+
+        Vector3 axis = Vector3.Cross(transform.up, Vector3.up);
+        if (axis.sqrMagnitude < 1e-5f) return;
+
+        // Ramps in over the dead zone and saturates by the time the car is on its side, so a
+        // car that is merely leaning hard is nudged and one that is inverted is hauled.
+        float strength = Mathf.Clamp01((tilt - uprightDeadZone) / 45f);
+        rb.AddTorque(axis.normalized * (uprightTorque * strength), ForceMode.Acceleration);
     }
 
     /// <summary>Bleeds off any movement across the ground while the car is held.</summary>
@@ -669,11 +789,15 @@ public class CarController : MonoBehaviour
         // control simply stops adding to an axis already over the limit. Clamping the
         // rigidbody's angular velocity instead would throw away exactly the momentum this
         // change exists to preserve.
-        float limit = maxAirSpin * Mathf.Deg2Rad;
+        // Scaled together, deliberately. More torque with the same spin cap just reaches the same
+        // ceiling sooner and still feels locked; raising the cap without the torque gives a car
+        // that is allowed to rotate faster than it can make itself rotate.
+        float limit = maxAirSpin * airControlScale * Mathf.Deg2Rad;
         Vector3 spin = rb.angularVelocity;
 
-        float pitchTorque = -pitch * airControlTorque;
-        float rollTorque = -roll * airControlTorque;
+        float torque = airControlTorque * airControlScale;
+        float pitchTorque = -pitch * torque;
+        float rollTorque = -roll * torque;
 
         if (Vector3.Dot(spin, transform.right) * pitchTorque > 0f &&
             Mathf.Abs(Vector3.Dot(spin, transform.right)) > limit)

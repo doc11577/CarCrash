@@ -1055,6 +1055,31 @@ every racer and their metres. If the AI all read 0 m while the player climbs, it
 followers — not the sort. This is the same lesson as `RunScore.playerCar` being left empty:
 **a frozen readout looks identical to a broken formula, a broken event and a broken subscription.**
 
+#### ⚠ POSITION WAS RANKING THE WRONG QUANTITY — 2026-09-03
+
+Second report on the same readout: *"doesn't change at the right time, sometimes too early or just
+doesn't count correctly."* The follower fix above was real but was not this.
+
+**Progress was `Distance − startDistance`: how far each car had travelled FROM ITS OWN GRID SLOT.**
+That is a different quantity from how far round the track it is, and it ranks the field wrongly in
+a way that looks almost right. **A car that started on the back row and has drawn level with one
+from the front row has travelled further, so it read as being AHEAD of a car sitting beside it.**
+Positions therefore changed at plausible-looking but wrong moments, which is exactly what was
+described.
+
+Position is *who is furthest round the track*, full stop. Every racer now measures against one
+origin — the start line — and `progress` is simply `Line.Distance`.
+
+**The wrinkle that made a per-car origin tempting in the first place: the grid is BEHIND the start
+line, so it projects onto the LAST segment and reads as nearly a whole lap AHEAD rather than a few
+metres behind.** At the green light any racer whose `LapFraction` is past halfway is therefore put
+on lap −1, which places the whole grid at small negative distances and makes the coordinate
+increase monotonically from the line.
+
+Lap counting then falls out for free: `floor(Distance / Length)` is −1 on the grid, 0 from the
+first crossing, 1 from the second, and the race ends when it reaches the lap count. **Nothing has
+to know where a car started**, which is the property the old origin lacked.
+
 #### R means RESPAWN in a race, and the follower has to be told
 
 `RunRestart` reloads the scene, which mid-race throws away seven other cars' races along with the
@@ -1109,6 +1134,82 @@ live inside RunScore.
 
 **Still open: damage to your own car still pays in a race**, at the destruction rate. Left alone
 because it is arguably right for a crash-racer, but it is not a considered decision yet.
+
+### Arcade handling, drifting and tyre marks — 2026-09-03
+
+Asked for: *"almost no rolling over, low chance to spin out, less realistic and more fun"*, drifting
+that pays like Asphalt 8, more air control, and tyre marks.
+
+**All of it is OFF by default and switched on by `RaceDirector` for the whole field.** The assists
+live on `CarController` with zero defaults, so a destruction run drives exactly as it always has —
+rolling the car is the POINT there — and `arcadeHandling` on the director turns them off again for
+an A/B when something feels wrong.
+
+**Applied to every racer, not just the player.** An AI that rolls over on a kerb the player cannot
+roll on is not seven opponents, it is seven obstacles, and the standings would be decided by which
+AI survived rather than which drove well.
+
+| Assist | Default | What it does |
+| --- | --- | --- |
+| `uprightTorque` | 11 m/s² | Rights the car past a **28° dead zone** |
+| `antiSpin` | 0.65 | Cancels yaw the steering never asked for |
+| `airControlScale` | 2.2 | Multiplies air torque **and** the spin cap together |
+
+- **The upright assist is DEAD-ZONED, not continuous.** This project spent a long time getting the
+  body to roll OUT of a corner correctly (lateral grip at the contact patch, the anti-roll bars),
+  and an always-on righting torque flattens all of it. Below 28° the car is cornering; past it, it
+  is falling over.
+- **⚠ ANTI-SPIN ONLY EVER SUBTRACTS, and that is what keeps drifting possible.** It compares actual
+  yaw against what the bicycle model says the steering asked for and removes only the excess, only
+  past `antiSpinAngle` (32°), and only when the car is rotating FURTHER into the slide. Damping in
+  both directions would fight a driver catching it, and damping all yaw would make a deliberate
+  drift impossible — which would have broken the next feature.
+- **Air torque and the spin cap scale TOGETHER.** More torque against the same cap just reaches the
+  same ceiling sooner and still feels locked; a higher cap without the torque lets the car rotate
+  faster than it can make itself rotate.
+- **`CarController.Sideslip` is now published**, because three separate things wanted it — the AI's
+  slide catch, the anti-spin, and drift scoring. One measurement beats three that can disagree.
+
+#### Drifting
+
+`RaceDirector.UpdateDrift`. Three properties are what make it read like Asphalt 8 rather than like
+a slip-angle readout:
+
+- **IT CHAINS.** `driftGrace` (0.65 s) lets the car straighten or leave the ground without ending
+  the drift, so flicking out of one corner into the next is ONE combo that keeps climbing.
+- **IT IS BANKED ON EXIT**, not paid per frame — the counter climbing while the outcome is in doubt
+  is where the tension is. Same argument as airtime, and the same reason a jump into a ravine pays
+  nothing.
+- **IT IS LOST ON CONTACT.** A drift that ends in the wall was not a drift. Without this the
+  cheapest way to earn is to slide into scenery, which is the opposite of the skill being rewarded.
+
+The angle term is the honest part: a lazy 14° slide earns almost nothing, 42° earns full rate, and
+**past that there is nothing more to gain — so there is never a reason to spin.** Above 78° the
+drift simply ends.
+
+#### Tyre marks — `Vehicle/SkidMarks.cs`
+
+**Trail renderers, one pair per wheel, on the PLAYER'S CAR ONLY.** Eight cars is thirty-two trails
+each accumulating geometry for its lifetime, and the chase camera means nobody sees what an AI
+leaves. A custom skid-mesh system is the right answer in a game that can afford it; four wheels of
+trail is the version that fits a Jasper Lake Chromebook.
+
+- **⚠ A TrailRenderer SWITCHED OFF AND ON AGAIN CONNECTS THE TWO SEGMENTS** — a straight black line
+  from where the last skid ended to where the next begins, across the whole map. Clearing it
+  instead deletes the marks still fading, so the only skid ever visible is the current one. **Two
+  slots per wheel, used alternately**, fixes both — the same trick, for the same reason, as the two
+  shockwave rings in `CarPodium`.
+- **Nothing is downloaded.** The soft edge is a 16-pixel alpha ramp generated in code, so this adds
+  nothing to a build already over its download budget and there is no licence to record.
+- **⚠ ASSIGN `markMaterial` BEFORE A WEB BUILD.** The runtime fallback uses `Shader.Find`, and a
+  shader only reaches a build if something at BUILD TIME depends on it — the exact trap that
+  shipped Update 2 with no garage backdrop. It will look perfect in the Editor and draw nothing in
+  the build.
+- **The emitter is not parented to the wheel.** A trail records its own transform every frame, and
+  a wheel mesh spins, steers and rides the suspension; it rides a plain child pinned to the contact
+  patch instead.
+- Wheelspin marks come from the **powered** wheels only — a dragged front tyre lays no rubber, and
+  marking all four off the line reads as sliding rather than accelerating.
 
 #### `RaceHud` is separate from `ScoreHud`, on purpose
 
@@ -1818,6 +1919,9 @@ stays over it.** Argue new content down on download time and rigidbody count, no
 | `Track/FallingBoulders.cs` | Boulders down the valley sides. Generated meshes, own pool, spawned ahead of the player. |
 | `Track/DartboardScore.cs` | Scores where the car lands on Bullseye. Archery rings, 10 in the gold down to 1. |
 | `Track/RaceTrack.cs` | The racing line as ordered child transforms. Answers "how far round is this car". |
+| `Game/RaceDirector.cs` | Runs a race: grid, countdown, standings, laps, finish, payout, R-to-respawn. |
+| `Game/RaceHud.cs` | Position, lap, countdown, live drift counter, results. Race mode only. |
+| `Vehicle/SkidMarks.cs` | Tyre marks from trail renderers while sliding or spinning up. Player car only. |
 | `Editor/RaceTrackEditor.cs` | Click along the road to lay a track out. Drop-to-ground, renumber, reverse, validate. |
 | `Game/ScoreHud.cs` | Gear counter, combo bar, airtime, MPH speedometer and floating popups. Builds its own canvases in code. |
 | `Game/PlayerWallet.cs` | Persistent gear balance, best run and owned cars, in PlayerPrefs. |
