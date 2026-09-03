@@ -110,6 +110,7 @@ GameObject:
   - component: {fileID: 5708871499934583507}
   - component: {fileID: 58867467502487153}
   - component: {fileID: 6415979989412138862}
+  - component: {fileID: -3779710565211614780}
   m_Layer: 6
   m_Name: CarE30
   m_TagString: Untagged
@@ -267,6 +268,12 @@ MonoBehaviour:
   airAngularDamping: 0.3
   maxAirSpin: 190
   debugSpeed: 0
+  holdDeceleration: 25
+  uprightTorque: 0
+  uprightDeadZone: 28
+  antiSpin: 0
+  antiSpinAngle: 32
+  airControlScale: 1
 --- !u!114 &473603020280776006
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -451,6 +458,7 @@ MonoBehaviour:
   minimumImpulse: 900
   damagePerImpulse: 0.045
   maxDamagePerImpact: 60
+  carVsCarCrumple: 3
   carVsCarDamage: 1
   partReach: 1.6
   ejectSpeed: 3.5
@@ -458,6 +466,7 @@ MonoBehaviour:
   detachGrace: 0.4
   partMass: 18
   detachedLayer: 0
+  protectWheels: 0
   damagingLayers:
     serializedVersion: 2
     m_Bits: 65
@@ -622,6 +631,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 49640ee3ffa9a014d8db7f4e6cea5ee1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerCar
+--- !u!114 &-3779710565211614780
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521731838676468038}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7994b21859a48d24f88f3cffc4fee7a9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SkidMarks
+  markMaterial: {fileID: 2100000, guid: 1bc662b693fd9294db43cfab835757ca, type: 2}
+  width: 0.24
+  lifetime: 5
+  slideAngle: 12
+  spinUpSpeed: 9
+  minSpeed: 3
+  lift: 0.02
 --- !u!1 &672416109721701262
 GameObject:
   m_ObjectHideFlags: 0

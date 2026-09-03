@@ -52,6 +52,7 @@ GameObject:
   - component: {fileID: 4241005421678183874}
   - component: {fileID: 3979675529701546719}
   - component: {fileID: 798484962353617468}
+  - component: {fileID: -8992981788343062300}
   m_Layer: 6
   m_Name: CarAventador
   m_TagString: Untagged
@@ -209,6 +210,12 @@ MonoBehaviour:
   airAngularDamping: 0.3
   maxAirSpin: 190
   debugSpeed: 0
+  holdDeceleration: 25
+  uprightTorque: 0
+  uprightDeadZone: 28
+  antiSpin: 0
+  antiSpinAngle: 32
+  airControlScale: 1
 --- !u!114 &2305144326556702791
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -393,6 +400,7 @@ MonoBehaviour:
   minimumImpulse: 900
   damagePerImpulse: 0.045
   maxDamagePerImpact: 60
+  carVsCarCrumple: 3
   carVsCarDamage: 1
   partReach: 1.6
   ejectSpeed: 3.5
@@ -400,6 +408,7 @@ MonoBehaviour:
   detachGrace: 0.4
   partMass: 18
   detachedLayer: 0
+  protectWheels: 0
   damagingLayers:
     serializedVersion: 2
     m_Bits: 65
@@ -579,6 +588,25 @@ MonoBehaviour:
   paintMaterialName: Lamborginhi_base_phong
   colour: {r: 1, g: 1, b: 1, a: 1}
   paintedSlots: 0
+--- !u!114 &-8992981788343062300
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2068478204062595931}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7994b21859a48d24f88f3cffc4fee7a9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SkidMarks
+  markMaterial: {fileID: 2100000, guid: 1bc662b693fd9294db43cfab835757ca, type: 2}
+  width: 0.24
+  lifetime: 5
+  slideAngle: 12
+  spinUpSpeed: 9
+  minSpeed: 3
+  lift: 0.02
 --- !u!1 &2074936754436927379
 GameObject:
   m_ObjectHideFlags: 0
