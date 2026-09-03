@@ -1100,6 +1100,69 @@ along the road in driving order.
 - **Reverse direction** keeps waypoint 0 where it is and reverses everything after it, so turning
   a lap round does not also move the start/finish line to the other side of the track.
 
+#### How to place waypoints well — the rules, and why each one is a rule
+
+Written 2026-09-02 after the first attempt put **126 points on The Dam** and the AI drove badly
+for reasons that were all traceable to the layout. The banner now measures the two numbers that
+matter live, so these are what it is telling you.
+
+**1. SPACING IS SET BY CURVATURE, NOT BY A CONSTANT.** The only question that matters is how far
+the straight line between two waypoints strays from the road it is meant to describe. On a
+straight, that is zero however long the gap; through a bend it is `R x (1 - cos(turn / 2))`.
+
+| Turn per segment | Miss on a 40 m corner |
+| --- | --- |
+| 15° | 0.34 m |
+| 25° | 0.94 m |
+| 40° | 2.4 m |
+| 60° | 5.4 m |
+
+**Keep it under about 25-30° per segment and the centreline is the road. Past that the LINE
+itself cuts the corner, and the AI then defends the shortcut** — which is exactly the reported
+"they cut corners into the scenery", arriving through the layout rather than through the code.
+The banner turns red past 30°.
+
+So: **long gaps on straights — 60-100 m is fine — and three or four points through a bend.** A
+constant spacing is wrong in both directions at once: it wastes points down a straight and still
+misses the apex.
+
+**2. CLICK THE MIDDLE OF THE ROAD, NOT A RACING LINE.** The AI already moves off the centreline
+to take a line, for free, out to `racingLineSlack` (0.75) of the half width. Hand-authoring an
+outside-inside-outside line means it then cuts inside THAT, and ends up off the road. Down the
+middle, with `width` describing the real road, gives a racing line automatically.
+
+**3. SET `width` BY TURNING IT DOWN UNTIL THE RUNGS STOP BEING RED.** Select the track and the
+corridor is raycast against the ground: red means an edge is over a wall, a barrier top or thin
+air. That is a measurement, and it beats guessing at a number that decides how much room the AI
+thinks it has. `offTrackMargin` follows from it automatically.
+
+**4. WAYPOINT 0 NEEDS CLEAR ROAD BEHIND IT.** The grid is laid out BACKWARDS along the racing
+line from waypoint 0 — `gridSetback` plus a row per pair — so at the current settings the back
+row is about 60 m behind the line. Start on a straight with that much road behind it, or the
+field starts in a corner or inside a wall.
+
+**5. PUT A POINT ON EVERY CREST AND EVERY DIP.** `ForwardAtDistance` comes from the line, and a
+single segment spanning a crest points into the hillside. That is the direction a respawned car
+is aimed along, and the direction the AI takes its aim point from.
+
+**6. ONE DIRECTION, ALL THE WAY ROUND, AND STOP BEFORE THE START.** The loop closes itself. The
+banner shows the distance back to waypoint 0 once there are four points, so stop when that reads
+like a normal gap — and check the closing segment does not cut across the start-line corner.
+
+**7. WATCH THE PREVIEW SPHERE, NOT THE CURSOR.** Place mode picks the RENDERED MESH, so clicking
+near a barrier puts the waypoint on top of the barrier. The sphere is where it will actually go.
+
+**8. DO NOT DRAG WAYPOINTS TO ADJUST THEM WITHOUT RE-DROPPING.** Dragging in the scene view moves
+along the VIEW PLANE, so a point nudged sideways ends up hanging over the road it used to sit on.
+Press **Drop all to ground** afterwards, every time.
+
+**9. FINISH WITH: Drop all to ground → Renumber → Validate.** Fix what Validate names, re-run it,
+and only then wire the spawner.
+
+**How many to expect:** a 1.5 km lap under these rules is roughly **40-60 points**, not 126.
+Denser is not free — it is not the CPU that suffers but the LINE, which starts inheriting the
+jitter of hand-clicking, and every wobble in it becomes a steering demand the AI defends.
+
 ### Racing the line — `TrafficDriver`, 2026-09-02
 
 **One term changed, and nothing was deleted.** `Decide()` scored each probe as

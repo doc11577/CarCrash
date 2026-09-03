@@ -57,6 +57,29 @@ public class RaceTrackEditor : Editor
 
     static bool Placing => placingTrack != null;
 
+    /// <summary>Where the next click would land, and whether there is anything under it.</summary>
+    /// <remarks>
+    /// Cached rather than recomputed per event: the banner, the preview marker and the placement
+    /// all want the same answer, and <c>RaySnap</c> against an imported map's mesh is not free.
+    /// Refreshed on mouse move and on repaint, which is every event that can change it.
+    /// </remarks>
+    static Vector3 preview;
+    static bool previewValid;
+
+    /// <summary>Metres of gap that reads as too tight, matching the track's own validator.</summary>
+    static float TightGap => placingTrack != null ? placingTrack.minSpacing : 6f;
+
+    /// <summary>
+    /// Degrees of turn per segment past which the corner is being cut by the LINE itself.
+    /// </summary>
+    /// <remarks>
+    /// A chord across an arc misses it by <c>R (1 - cos(angle/2))</c>. On a 40 m corner that is
+    /// under a metre at 25 degrees and nearly three at 45 — so past about 25 the centreline stops
+    /// describing the road and starts describing a shortcut across it, and the AI then defends
+    /// the shortcut. 30 is the warning, with a little slack.
+    /// </remarks>
+    const float WideTurn = 30f;
+
     // ---- inspector ---------------------------------------------------------------------------
 
     public override void OnInspectorGUI()
@@ -105,6 +128,7 @@ public class RaceTrackEditor : Editor
         {
             if (GUILayout.Button("Add point after each selected")) SplitSelected(track);
             if (GUILayout.Button("Delete last")) DeleteLast(track);
+            if (GUILayout.Button("Delete ALL")) DeleteAll(track);
         }
 
         EditorGUILayout.Space();
@@ -211,7 +235,11 @@ public class RaceTrackEditor : Editor
                 // Makes this control the fallback for the whole view, so a click on scenery is
                 // offered here before the scene view's own object picking gets it.
                 HandleUtility.AddDefaultControl(control);
-                if (e.type == EventType.MouseMove) view.Repaint();
+
+                if (e.type != EventType.MouseMove) break;
+                previewValid = Surface(HandleUtility.GUIPointToWorldRay(e.mousePosition),
+                                       out preview);
+                view.Repaint();
                 break;
 
             case EventType.MouseDown:
@@ -237,47 +265,147 @@ public class RaceTrackEditor : Editor
         }
     }
 
-    /// <summary>A banner, so place mode is never on without saying so.</summary>
+    /// <summary>
+    /// A banner that says place mode is on, and measures the click before it is made.
+    /// </summary>
+    /// <remarks>
+    /// The gap and the turn angle are the two numbers that decide whether a waypoint chain is any
+    /// good, and both are impossible to judge by eye in a perspective view — 20 m looks like 60 m
+    /// on a downhill, and a 40-degree turn looks gentle from behind. Showing them live turns
+    /// "place points sensibly" into something the tool answers rather than something to remember.
+    /// </remarks>
     static void DrawOverlay(SceneView view)
     {
         Handles.BeginGUI();
 
-        Rect box = new Rect(10f, 10f, 320f, 46f);
-        GUI.color = new Color(0f, 0f, 0f, 0.75f);
+        Rect box = new Rect(10f, 10f, 340f, 76f);
+        GUI.color = new Color(0f, 0f, 0f, 0.78f);
         GUI.Box(box, GUIContent.none);
         GUI.color = Color.white;
 
-        GUIStyle style = new GUIStyle(EditorStyles.boldLabel)
+        GUIStyle title = new GUIStyle(EditorStyles.boldLabel)
         {
             normal = { textColor = new Color(1f, 0.78f, 0.15f) },
             wordWrap = true,
         };
 
         int placed = placingTrack != null ? placingTrack.transform.childCount : 0;
-        GUI.Label(new Rect(box.x + 8f, box.y + 5f, box.width - 16f, box.height - 10f),
-                  $"PLACING WAYPOINTS — {placed} so far\nClick the road in driving order. " +
-                  "Esc to stop.", style);
+        GUI.Label(new Rect(box.x + 8f, box.y + 4f, box.width - 16f, 18f),
+                  $"PLACING WAYPOINTS — {placed} placed", title);
+
+        Measure(out float gap, out float turn, out float toStart);
+
+        GUIStyle stats = new GUIStyle(EditorStyles.boldLabel) { wordWrap = false };
+        bool tight = gap >= 0f && gap < TightGap;
+        bool sharp = turn >= 0f && turn > WideTurn;
+
+        stats.normal.textColor = tight || sharp
+            ? new Color(1f, 0.45f, 0.35f)
+            : new Color(0.6f, 0.95f, 0.7f);
+
+        string gapText = gap < 0f ? "gap —" : $"gap {gap:0} m";
+        string turnText = turn < 0f ? "turn —" : $"turn {turn:0}°";
+        string startText = toStart < 0f ? "" : $"   ·   start {toStart:0} m away";
+
+        GUI.Label(new Rect(box.x + 8f, box.y + 24f, box.width - 16f, 18f),
+                  $"{gapText}   ·   {turnText}{startText}", stats);
+
+        GUIStyle hint = new GUIStyle(EditorStyles.label)
+        {
+            normal = { textColor = new Color(0.8f, 0.8f, 0.8f) },
+            wordWrap = true,
+            fontSize = 10,
+        };
+
+        string advice =
+            tight ? "Too close together — that point is doing no work."
+            : sharp ? "Turning too much in one step. The LINE is now cutting the corner."
+            : "Middle of the road. Long gaps on straights, three or four through a bend.";
+
+        GUI.Label(new Rect(box.x + 8f, box.y + 44f, box.width - 16f, 30f), advice, hint);
 
         Handles.EndGUI();
+    }
+
+    /// <summary>
+    /// Gap to the last waypoint, turn angle the next click would create, and distance to the start.
+    /// </summary>
+    /// <remarks>
+    /// The turn is measured at the LAST waypoint, between the segment arriving at it and the one
+    /// this click would create — so it answers "was that point placed early enough", which is the
+    /// question, rather than "how bent is this corner", which is the map's business.
+    ///
+    /// Negative means not applicable yet: there is no gap before the first point and no angle
+    /// before the second.
+    /// </remarks>
+    static void Measure(out float gap, out float turn, out float toStart)
+    {
+        gap = -1f;
+        turn = -1f;
+        toStart = -1f;
+
+        if (!previewValid || placingTrack == null) return;
+
+        int n = placingTrack.transform.childCount;
+        if (n == 0) return;
+
+        Vector3 last = placingTrack.transform.GetChild(n - 1).position;
+        gap = Vector3.Distance(last, preview);
+
+        // Only meaningful once the loop is long enough that closing it is a real decision;
+        // before that it just reads as noise beside the first few points.
+        if (n >= 4) toStart = Vector3.Distance(preview, placingTrack.transform.GetChild(0).position);
+
+        if (n < 2) return;
+
+        Vector3 into = last - placingTrack.transform.GetChild(n - 2).position;
+        Vector3 outOf = preview - last;
+
+        // Flattened, because the turn that matters to a car is the one it steers through. A crest
+        // is a big angle in 3D and no steering input at all.
+        into.y = 0f;
+        outOf.y = 0f;
+        if (into.sqrMagnitude < 1e-4f || outOf.sqrMagnitude < 1e-4f) return;
+
+        turn = Vector3.Angle(into, outOf);
     }
 
     /// <summary>A marker where the next click would land, so it is not a guess.</summary>
     static void DrawPreview(Vector2 mouse)
     {
-        Ray ray = HandleUtility.GUIPointToWorldRay(mouse);
-        if (!Surface(ray, out Vector3 point)) return;
+        // Refreshed here as well as on mouse move, because orbiting the camera changes where the
+        // same screen position lands without the mouse having moved at all.
+        previewValid = Surface(HandleUtility.GUIPointToWorldRay(mouse), out preview);
+        if (!previewValid) return;
 
-        Handles.color = new Color(1f, 0.78f, 0.15f, 0.9f);
-        Handles.SphereHandleCap(0, point + Vector3.up * PlaceLift, Quaternion.identity, 1.6f,
-                                EventType.Repaint);
+        Vector3 at = preview + Vector3.up * PlaceLift;
+
+        Measure(out float gap, out float turn, out _);
+        bool bad = (gap >= 0f && gap < TightGap) || (turn >= 0f && turn > WideTurn);
+
+        Handles.color = bad ? new Color(1f, 0.45f, 0.35f, 0.9f)
+                            : new Color(1f, 0.78f, 0.15f, 0.9f);
+        Handles.SphereHandleCap(0, at, Quaternion.identity, 1.6f, EventType.Repaint);
+
+        if (placingTrack == null || placingTrack.transform.childCount == 0) return;
 
         // Joined to the last waypoint, so the segment about to be created is visible before it
         // exists — which is how a click that would double back gets noticed rather than undone.
-        if (placingTrack != null && placingTrack.transform.childCount > 0)
-        {
-            Transform last = placingTrack.transform.GetChild(placingTrack.transform.childCount - 1);
-            Handles.DrawDottedLine(last.position, point + Vector3.up * PlaceLift, 4f);
-        }
+        Transform last = placingTrack.transform.GetChild(placingTrack.transform.childCount - 1);
+        Handles.DrawDottedLine(last.position, at, 4f);
+
+        // The corridor this click would create, at the track's own width. A centreline is easy to
+        // place somewhere the road is not wide enough for, and impossible to see that you have.
+        float half = placingTrack.width * 0.5f;
+        Vector3 span = at - last.position;
+        span.y = 0f;
+        if (span.sqrMagnitude < 1e-4f) return;
+
+        Vector3 side = Vector3.Cross(Vector3.up, span.normalized) * half;
+        Handles.color = new Color(1f, 0.78f, 0.15f, 0.35f);
+        Handles.DrawDottedLine(last.position + side, at + side, 3f);
+        Handles.DrawDottedLine(last.position - side, at - side, 3f);
+        Handles.DrawLine(at + side, at - side);
     }
 
     static void Place(RaceTrack track, Vector2 mouse)
@@ -363,6 +491,31 @@ public class RaceTrackEditor : Editor
         point.transform.SetAsLastSibling();
 
         EditorUtility.SetDirty(track);
+        SceneView.RepaintAll();
+    }
+
+    /// <summary>Clears the whole lap, behind a confirmation.</summary>
+    /// <remarks>
+    /// A dialog rather than the two-press arming the reset button in the menu uses. That pattern
+    /// is there because a modal in a double-nested Google Sites iframe is a real problem; in the
+    /// Editor a dialog is free, and this throws away an afternoon of clicking. Undo still covers
+    /// it, but nobody trusts that at the moment they need it.
+    /// </remarks>
+    static void DeleteAll(RaceTrack track)
+    {
+        int n = track.transform.childCount;
+        if (n == 0) return;
+
+        if (!EditorUtility.DisplayDialog(
+                "Delete every waypoint?",
+                $"This removes all {n} waypoints from '{track.name}'.\n\nCtrl+Z will bring them " +
+                "back, but do not rely on it.",
+                "Delete them", "Cancel"))
+            return;
+
+        for (int i = n - 1; i >= 0; i--)
+            Undo.DestroyObjectImmediate(track.transform.GetChild(i).gameObject);
+
         SceneView.RepaintAll();
     }
 
