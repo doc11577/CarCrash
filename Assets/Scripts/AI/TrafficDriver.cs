@@ -58,6 +58,18 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     /// </remarks>
     public static int LiveCount => Live.Count;
 
+    /// <summary>
+    /// Every AI car alive, in spawn order. Read-only — this is the register, not a scratch list.
+    /// </summary>
+    /// <remarks>
+    /// Exists so the race director can build the standings without a scene search, and more
+    /// importantly so it can reuse each car's EXISTING follower. Giving the director its own
+    /// follower per car would be two objects tracking one car from different moments in the
+    /// frame; they disagree across a lap boundary, and a car appears to gain and lose a lap in
+    /// consecutive frames.
+    /// </remarks>
+    public static IReadOnlyList<TrafficDriver> All => Live;
+
     [Header("Looking ahead")]
     [Tooltip("How far ahead the probes sample when stopped, in metres. Too short and it cannot " +
              "see a wall in time; too long and it ignores what is directly in front of it.")]

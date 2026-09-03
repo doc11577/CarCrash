@@ -139,8 +139,11 @@ public class TrafficSpawner : MonoBehaviour
 
         Transform origin = grid != null ? grid : transform;
 
+        // Offset past the player's slot when racing, so the two grids cannot overlap.
+        int first = ReservesPlayerSlot ? 1 : 0;
+
         for (int i = 0; i < count; i++)
-            Spawn(origin, i);
+            Spawn(origin, first + i);
 
         spawned = count;
     }
@@ -171,7 +174,7 @@ public class TrafficSpawner : MonoBehaviour
             // Handed over rather than wired on the prefab, for the same reason obstacle
             // avoidance is: the same traffic prefabs are used on every map, and only the scene
             // knows whether this one is being raced.
-            if (raceTrack != null) driver.Race(raceTrack);
+            if (Racing) driver.Race(raceTrack);
         }
 
         if (!scoreTrafficDamage) return;
@@ -179,6 +182,46 @@ public class TrafficSpawner : MonoBehaviour
         CarDamage damage = car.GetComponent<CarDamage>();
         if (damage != null && RunScore.Instance != null) RunScore.Instance.Register(damage);
     }
+
+    /// <summary>
+    /// The grid slot at <paramref name="index"/>, for whoever else needs to stand on this grid.
+    /// </summary>
+    /// <remarks>
+    /// The race director puts the PLAYER on the grid through this, rather than working the
+    /// position out for itself from the track. Two pieces of code laying out one grid is how you
+    /// get a player car spawned inside an AI car — and the failure is a physics explosion at the
+    /// green light, which reads as a bug in the cars rather than in the arithmetic.
+    ///
+    /// Slot 0 is reserved for the player whenever <see cref="raceTrack"/> is set, which is why
+    /// the AI spawn loop offsets its index.
+    /// </remarks>
+    public void GridPose(int index, out Vector3 position, out Quaternion rotation)
+    {
+        if (UseTrackGrid) raceTrack.Rebuild();
+        GridSlot(grid != null ? grid : transform, index, out position, out rotation);
+    }
+
+    /// <summary>True when this run is actually a race — a track is wired AND the mode is race.</summary>
+    /// <remarks>
+    /// THE SAME SCENE SERVES BOTH MODES, which is the whole reason a mode id exists. The Dam is a
+    /// race track and a destruction map, and the only difference is which rules are switched on
+    /// when it loads — so a wired Race Track means "this map CAN be raced", not "this run is a
+    /// race".
+    /// </remarks>
+    public bool Racing => raceTrack != null && GameSelection.IsRace;
+
+    /// <summary>
+    /// Whether to lay the grid out along the track rather than on the Grid transform.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately true in the EDITOR regardless of mode, so the grid gizmo shows the racing
+    /// layout whenever a track is wired. Otherwise the gizmo would silently depend on whichever
+    /// mode was last played, and a scene would look wrong for a reason that is not in the scene.
+    /// </remarks>
+    bool UseTrackGrid => raceTrack != null && (!Application.isPlaying || GameSelection.IsRace);
+
+    /// <summary>True when slot 0 is being held for the player.</summary>
+    public bool ReservesPlayerSlot => UseTrackGrid;
 
     /// <summary>Where car <paramref name="index"/> starts, and which way it faces.</summary>
     /// <remarks>
@@ -200,7 +243,7 @@ public class TrafficSpawner : MonoBehaviour
         // Centre each row on the grid line rather than growing off to one side.
         float across = (slot - (perRow - 1) * 0.5f) * lateralSpacing;
 
-        if (raceTrack != null && raceTrack.Count >= 2)
+        if (UseTrackGrid && raceTrack.Count >= 2)
         {
             // Measured backwards from the start line along the lap, so a row is a row of TRACK
             // and stays on the road through a corner instead of running off into the scenery.

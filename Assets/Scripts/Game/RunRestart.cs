@@ -33,6 +33,14 @@ public class RunRestart : MonoBehaviour
         if (Time.unscaledTime < armedAt) return;
         if (RestartOverlay.InProgress) return;
 
+        // A RACE OWNS R, and it means something different there: go back to the last checkpoint.
+        // Reloading the scene mid-race would throw away seven other cars' races along with the
+        // player's, which is not what anyone pressing R in a corner is asking for.
+        //
+        // The director stands this down rather than this component knowing about races, so a
+        // destruction map — which has no director — keeps the restart it has always had.
+        if (RaceDirector.Instance != null) return;
+
         // The dev tuner puts editable number boxes on the pause screen, and R would throw away
         // the run being tuned. The keypress arrives whether or not the field accepts the letter.
         if (UiKit.Typing()) return;

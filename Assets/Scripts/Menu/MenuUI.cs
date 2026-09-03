@@ -72,7 +72,7 @@ public class MenuUI : MonoBehaviour
     [Tooltip("Seconds the loading bar is held on screen at minimum, so it does not flash.")]
     public float minimumLoadTime = 0.4f;
 
-    enum Page { Main, Maps, Cars, Options }
+    enum Page { Main, Modes, Maps, Cars, Options }
 
     RectTransform root;
     readonly Dictionary<Page, GameObject> pages = new Dictionary<Page, GameObject>();
@@ -149,6 +149,7 @@ public class MenuUI : MonoBehaviour
         if (podium != null) pageBackdrop.enabled = false;
 
         pages[Page.Main] = BuildMain();
+        pages[Page.Modes] = BuildModes();
         pages[Page.Maps] = BuildMaps();
         pages[Page.Cars] = BuildCars();
         pages[Page.Options] = BuildOptions();
@@ -182,7 +183,7 @@ public class MenuUI : MonoBehaviour
              .fontStyle = FontStyles.Bold;
 
         UiKit.Button(page.transform, "PLAY", new Vector2(0f, 105f), new Vector2(420f, 74f),
-                     () => Show(Page.Maps), accent: true);
+                     () => Show(Page.Modes), accent: true);
 
         UiKit.Button(page.transform, "OPTIONS", new Vector2(0f, 18f), new Vector2(420f, 66f),
                      () => Show(Page.Options));
@@ -210,6 +211,73 @@ public class MenuUI : MonoBehaviour
                    new Vector2(0f, -395f), new Vector2(1100f, 40f));
 
         return page;
+    }
+
+    /// <summary>Pick a mode, then a map. The mode is the new first decision of a run.</summary>
+    /// <remarks>
+    /// A page rather than a toggle on the map screen. The two modes are different games played on
+    /// the same maps — one is scored on damage and one on finishing — and a choice that changes
+    /// what the buttons underneath MEAN should not be a switch tucked beside them.
+    ///
+    /// The chosen mode is written straight to <see cref="GameSelection"/> on click, so a player
+    /// who quits from the map screen and comes back still has the mode they picked.
+    /// </remarks>
+    GameObject BuildModes()
+    {
+        GameObject page = NewPage("Modes");
+
+        UiKit.Text(page.transform, "SELECT MODE", 64f, UiKit.Ink,
+                   TextAlignmentOptions.Center, new Vector2(0f, 320f), new Vector2(1200f, 90f))
+             .fontStyle = FontStyles.Bold;
+
+        UiKit.Button(page.transform, "RACE", new Vector2(0f, 130f), new Vector2(660f, 86f),
+                     () => ChooseMode(GameSelection.Race), accent: true);
+
+        UiKit.Text(page.transform, "Three laps against seven cars. Wheels stay on.",
+                   24f, UiKit.Muted, TextAlignmentOptions.Center,
+                   new Vector2(0f, 70f), new Vector2(660f, 32f));
+
+        UiKit.Button(page.transform, "DESTRUCTION", new Vector2(0f, -30f), new Vector2(660f, 86f),
+                     () => ChooseMode(GameSelection.Destruction));
+
+        UiKit.Text(page.transform, "Bomb downhill and wreck the car. Damage pays.",
+                   24f, UiKit.Muted, TextAlignmentOptions.Center,
+                   new Vector2(0f, -90f), new Vector2(660f, 32f));
+
+        modeStatus = UiKit.Text(page.transform, "", 24f, UiKit.Accent,
+                                TextAlignmentOptions.Center,
+                                new Vector2(0f, -180f), new Vector2(900f, 32f));
+
+        UiKit.Button(page.transform, "BACK", new Vector2(0f, -380f), new Vector2(280f, 62f),
+                     () => Show(Page.Main));
+
+        return page;
+    }
+
+    TextMeshProUGUI modeStatus;
+
+    /// <summary>
+    /// Says which mode is currently chosen, so arriving at the page is not a blank guess.
+    /// </summary>
+    /// <remarks>
+    /// Text rather than a highlighted button. The two buttons already differ — RACE is the accent
+    /// one — and lighting the chosen mode as well would make "selected" and "recommended" look
+    /// like the same thing, which is the confusion the garage's single changing action button
+    /// exists to avoid.
+    /// </remarks>
+    void RefreshMode()
+    {
+        if (modeStatus == null) return;
+
+        modeStatus.text = GameSelection.IsRace
+            ? "Currently: RACE"
+            : "Currently: DESTRUCTION";
+    }
+
+    void ChooseMode(string mode)
+    {
+        GameSelection.ModeId = mode;
+        Show(Page.Maps);
     }
 
     GameObject BuildMaps()
@@ -719,6 +787,7 @@ public class MenuUI : MonoBehaviour
         // Repaint on arrival rather than only at build time, because a reset can change the
         // wallet, ownership and dev mode while every page already exists.
         if (page == Page.Main) RefreshMain();
+        if (page == Page.Modes) RefreshMode();
         if (page == Page.Cars) RefreshCars();
         if (page == Page.Options) RefreshSave();
         if (page != Page.Options) DisarmReset();

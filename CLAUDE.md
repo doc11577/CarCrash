@@ -975,7 +975,120 @@ logic.** If it will not hold, the answer is fewer AI or cheaper AI, and that is 
 before the mode is built around eight. Turn `FallingBoulders` OFF on race maps regardless — 16
 boulders plus 8 cars is far past the 40-rigidbody budget.
 
-### Build order — steps 1 and 3 are BUILT, 2026-09-02
+### The race itself — `RaceDirector`, `RaceHud`, mode select, 2026-09-03
+
+Steps 4-7. **Written and compiling; NOT yet run.** The AI following the line is confirmed in play;
+everything in this section is not.
+
+- **THE SAME SCENE IS BOTH MODES, and that is the decision everything else follows from.** The Dam
+  is a race track and a destruction map; the only difference is which rules switch on when it
+  loads. So a wired `RaceTrack` means *this map CAN be raced*, not *this run is a race* —
+  `GameSelection.IsRace` decides, and both `RaceDirector` and `TrafficSpawner` gate on it.
+
+  **The director does NOT claim `Instance` in destruction mode**, and that is load-bearing rather
+  than tidy: `RunRestart` stands ITSELF down when a director exists, so a director that merely
+  disabled itself would silently take R away from destruction mode.
+
+- **`TrafficSpawner.UseTrackGrid` is deliberately true in the EDITOR whatever the mode**, so the
+  grid gizmo shows the racing layout whenever a track is wired. Otherwise the gizmo depends on
+  which mode was last played and a scene looks wrong for a reason that is not in the scene.
+
+- **The grid is laid out ONCE, by the spawner, and the director asks it where pole is.** Two
+  pieces of code laying out one grid is how a player car gets spawned inside an AI car, and the
+  failure is a physics explosion at the green light that reads as a bug in the cars. Slot 0 is
+  reserved whenever the grid is on a track; the AI spawn loop offsets past it.
+
+- **The field is gathered on the first `Update`, not in `Start`.** Both spawners create their cars
+  in Awake or Start and component order across GameObjects is undefined. By the first Update every
+  Start has run — deterministic, rather than a coin flip that works with four cars and fails with
+  eight.
+
+- **⚠ A METHOD CALLED `Start` IS A LIFECYCLE METHOD, and the compiler cannot see the mistake.**
+  The green light was written as `void Start()` for about a minute. Unity duly called it at scene
+  load, over an empty field, setting the state to Racing before the grid had formed — no
+  countdown, every car released the instant the scene opened. It is `GoGreen()`.
+
+- **Cars are held with `CarController.Frozen`, not `isKinematic`.** Frozen ignores the driver and
+  holds the handbrake, so whoever freezes a car does not need to know what was driving it — a
+  keyboard on one and an AI on seven. Physics keeps running, so the cars settle on their springs
+  and stay planted on a slope; a kinematic car dropped onto the grid hangs in the air at whatever
+  height it was spawned at.
+
+- **The director reuses each AI's EXISTING follower and creates exactly one of its own, for the
+  player.** Two followers on one car update at different moments in the frame, disagree across a
+  lap boundary, and the car appears to gain and lose a lap in consecutive frames.
+
+- **Laps are measured from `startDistance` captured at the green light**, so where a car sits on
+  the grid cannot skew them. The follower is re-`Snap`ped at that moment too — a car has settled
+  and been nudged since it was placed.
+
+- **Standings put FINISHERS first, in finish order, then everyone else by distance.** A plain
+  distance sort makes the winner visibly slide down the order the moment their progress stops
+  climbing while everyone else completes the lap.
+
+#### R means RESPAWN in a race, and the follower has to be told
+
+`RunRestart` reloads the scene, which mid-race throws away seven other cars' races along with the
+player's. The director owns R instead.
+
+- **`safeDistance` is ABSOLUTE, laps included, not a distance round the lap.** A lap-relative value
+  has to be un-wrapped against the current lap, and the case that breaks is crashing just after the
+  start line: the safe point is on the previous lap, the wrap puts it back near the end of this
+  one, and the respawn hands out a free lap.
+- **It is the last point the car was on track, upright AND grounded** — not the live position.
+  Using the live position puts a car that has driven off the dam back exactly where it drove off.
+- **`SetDistance`, never `Snap`.** Snap searches the whole track and RESETS the lap count, which
+  would hand a player on lap 3 a three-lap penalty for going off. And the follower must be told at
+  all: moving the car and letting `Advance` discover it is a jump of tens of metres in one frame,
+  which is precisely what the search window refuses — the follower would stay at the crash and the
+  standings would freeze for that car.
+- **Respawning goes BACK `respawnSetback` metres**, so it can never be used to skip the corner that
+  was being crashed at.
+
+#### Wheels are protected by EXCLUSION, as planned
+
+`CarDamage.protectWheels` is set by the director on every racer. Identified by `wheelIndex`, which
+is a fact the part already carries — not by name, which is the matching that has cost this project
+three bugs, and `trim` contains `rim` is exactly the trap here.
+
+**Health is CLAMPED to 1, not merely left undetached.** Leaving it at zero means all four wheels
+fall off the instant the protection is lifted. Everything else still comes off: the car is meant to
+finish a race looking wrecked, it just has to still be driveable.
+
+#### Race payouts
+
+Through `RunScore.Award`, which exists for exactly this — a rule belonging to one mode should not
+live inside RunScore.
+
+| Payout | Default | Notes |
+| --- | --- | --- |
+| 1st / 2nd / 3rd | 1500 / 900 / 500 | plus the finish bonus |
+| Finishing at all | 200 | a race completed must beat one abandoned |
+| Speed | 8 /s above 25 m/s | **silent, no popup** |
+| Near miss | 45 | close pass at speed, no contact |
+
+- **The speed bonus raises NO popup.** A popup every frame recycles the eight popup slots
+  continuously and starves everything else on screen — the exact fault that hid the WRECKER
+  caption when traffic damage started paying out. **A popup budget is a scoring rule in disguise.**
+- **It accumulates to whole gears before awarding.** `Award` takes an int, so paying
+  `8 * deltaTime` every frame rounds to zero every time and the bonus never arrives at all.
+- **A near miss is a STATE, not an instant.** It begins when a car comes within the radius at
+  speed and pays when it leaves, so one frame of proximity does not pay and a long side-by-side
+  fight pays once. **A pass that ends in a collision was a collision** — hence tracking the last
+  damage time, because PvP already pays for hitting people and paying both would make ramming the
+  most profitable way to "pass".
+
+**Still open: damage to your own car still pays in a race**, at the destruction rate. Left alone
+because it is arguably right for a crash-racer, but it is not a considered decision yet.
+
+#### `RaceHud` is separate from `ScoreHud`, on purpose
+
+Not a mode branch threaded through 500 working lines that are drawn on every run of the game. This
+draws only when a director exists, so a map with no race cannot be affected by it. One static
+canvas is enough — position changes perhaps twenty times a race and the lap three times, unlike the
+popups, which is why ScoreHud needs a second canvas and this does not.
+
+### Build order — 1-7 BUILT, only 2 outstanding
 
 1. ~~**`Track/RaceTrack.cs`**~~ — **BUILT.** See the section below.
 2. **Perf check** — 8 cars on The Dam, read the readout. **NOT DONE — this is the next thing,
@@ -983,10 +1096,10 @@ boulders plus 8 cars is far past the 40-rigidbody budget.
    `N boulders live` so the measurement says on screen what it was taken with.
 3. ~~**AI follows the track**~~ — **BUILT.** One term swapped in `TrafficDriver.Decide()`,
    exactly as planned; nothing was deleted. See below.
-4. **`Game/RaceDirector.cs`** — laps, positions, finish order, R-to-checkpoint respawn.
-5. **Race scoring** — placement, speed, airtime, near miss, PvP, via `RunScore.Award()`.
-6. **Menu** — mode select, then map select. `GameSelection` **already has** the mode id.
-7. **Wheels made undetachable in race mode.**
+4. ~~**`Game/RaceDirector.cs`**~~ — **BUILT**, unrun. Laps, standings, countdown, finish, R-to-respawn.
+5. ~~**Race scoring**~~ — **BUILT**, unrun. Placement, finish, speed, near miss; airtime and PvP were already shared.
+6. ~~**Menu**~~ — **BUILT**, unrun. A Modes page between Main and Maps.
+7. ~~**Wheels undetachable**~~ — **BUILT**, unrun. `CarDamage.protectWheels`.
 8. Later: boost pads, nitro.
 
 **Nothing in 1 or 3 has been run.** Both compile clean against the Unity assemblies; neither has

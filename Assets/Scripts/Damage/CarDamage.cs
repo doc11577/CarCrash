@@ -148,6 +148,13 @@ public class CarDamage : MonoBehaviour
     [Tooltip("Layer detached parts move to. Must be able to collide with the car that shed it.")]
     public int detachedLayer = 0;
 
+    [Tooltip("Stops WHEELS ever detaching, however much damage they take. Set by the race " +
+             "director at the start of a race and left off everywhere else — losing a wheel is " +
+             "good destruction and an instant retirement from a race.\n\n" +
+             "Everything else on the car still comes off. The car is meant to end a race looking " +
+             "wrecked; it just has to still be driveable.")]
+    public bool protectWheels;
+
     [Header("Layers")]
     [Tooltip("Only collisions with these layers can cause damage. Exclude the car's own layer.")]
     public LayerMask damagingLayers = ~0;
@@ -334,6 +341,17 @@ public class CarDamage : MonoBehaviour
         // TotalDamage above is deliberately NOT capped: the score should still reflect how
         // hard the hit was, even though no single panel takes all of it.
         hit.health -= Mathf.Min(damage, maxDamagePerImpact);
+
+        // A LOST WHEEL ENDS A RACE, so in race mode wheels do not come off. Identified by
+        // wheelIndex, which is a fact the part already carries rather than a name to match on —
+        // this project has been bitten three times by implicit matching, and "trim" contains
+        // "rim" is exactly the trap here.
+        //
+        // Health is CLAMPED, not merely left undetached. Letting it sit at zero means the wheel
+        // falls off the instant the protection is lifted, which would make returning to the
+        // garage between races shed four wheels at once.
+        if (protectWheels && hit.wheelIndex >= 0) hit.health = Mathf.Max(1f, hit.health);
+
         if (hit.health <= 0f) Detach(hit, contact, byPlayer);
     }
 

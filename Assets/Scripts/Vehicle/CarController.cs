@@ -189,6 +189,17 @@ public class CarController : MonoBehaviour
     /// </summary>
     public ICarDriver Driver { get; set; }
 
+    /// <summary>
+    /// While true the car ignores its driver entirely and holds the handbrake.
+    /// </summary>
+    /// <remarks>
+    /// For a race countdown, and anything else that has to hold a car still without caring what
+    /// is driving it. Physics keeps running — the car settles on its springs and stays planted on
+    /// a slope — which <c>isKinematic</c> would not do: a kinematic car dropped onto the grid
+    /// hangs in the air at whatever height it was spawned.
+    /// </remarks>
+    public bool Frozen { get; set; }
+
     /// <summary>Forward speed in metres per second. Negative when reversing.</summary>
     public float ForwardSpeed { get; private set; }
 
@@ -278,9 +289,13 @@ public class CarController : MonoBehaviour
         Speed = velocity.magnitude;
         debugSpeed = Speed;
 
-        float throttle  = Driver != null ? Driver.Throttle : 0f;
-        float steerWish = Driver != null ? Driver.Steer : 0f;
-        bool handbrake  = Driver != null && Driver.Handbrake;
+        // Frozen ignores the driver rather than clearing it, so whoever froze the car does not
+        // have to remember what was driving it — which for a race grid is a keyboard on one car
+        // and an AI on seven. The handbrake goes ON as well as the throttle going off, or a grid
+        // on any slope rolls away during the countdown.
+        float throttle  = !Frozen && Driver != null ? Driver.Throttle : 0f;
+        float steerWish = !Frozen && Driver != null ? Driver.Steer : 0f;
+        bool handbrake  = Frozen || (Driver != null && Driver.Handbrake);
 
         UpdateSteering(steerWish, dt);
 
