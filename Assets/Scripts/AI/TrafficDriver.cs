@@ -172,10 +172,50 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "all and drive nose-to-tail down the exact centre.")]
     public float racingLineWeight = 1f;
 
-    [Tooltip("Fraction of the half-width a probe may stray before it is penalised at all. Below " +
-             "1 the AI is charged a little for using the outer part of the road, which keeps it " +
-             "on a line rather than wandering the full width. At 1 the whole road is free.")]
+    [Tooltip("Fraction of the half-width a probe may stray before the SQUARED penalty applies. " +
+             "Below 1 the AI is charged for using the outer part of the road. At 1 the whole " +
+             "road is free of that term — Centre Pull still applies everywhere.")]
     [Range(0.2f, 1f)] public float racingLineSlack = 0.75f;
+
+    [Tooltip("Penalty per metre from the CENTRELINE, applied everywhere including on the road. " +
+             "This is what makes the cars want to sit on the middle of the line rather than " +
+             "roam the corridor.\n\n" +
+             "It is separate from Racing Line Weight because the two want different shapes: " +
+             "this one is linear and gentle, so a metre off centre costs a metre's worth and the " +
+             "car is always mildly drawn back; that one is squared and brutal, and exists only " +
+             "to make leaving the road unthinkable.\n\n" +
+             "TURN IT DOWN toward 0.3 once the racing is reliable — hugging the exact centre is " +
+             "tidy but it makes passing impossible and it reads as a train rather than a race.")]
+    public float centrePull = 1.2f;
+
+    [Tooltip("Points sampled ALONG each probe when scoring how far it strays from the line. 1 " +
+             "scores only where the probe lands, which is what let cars drive straight across " +
+             "the inside of a hairpin — the far side of the bend is on the road, so it looked " +
+             "free. 3 is enough to catch a cut; more costs projections and finds nothing new.")]
+    [Range(1, 6)] public int pathSamples = 3;
+
+    [Header("Racing — braking")]
+    [Tooltip("Lateral acceleration the AI believes it has, in m/s². This sets corner entry " +
+             "speed: a corner of radius R is taken at sqrt(grip x R), so 12 takes a 40 m corner " +
+             "at 22 m/s.\n\n" +
+             "Tune it by watching, not by deriving it from the tyre model — turn assist means " +
+             "the car corners better than its grip values alone suggest. Too high and they run " +
+             "wide at every corner exit; too low and they crawl round everything.")]
+    public float cornerGrip = 12f;
+
+    [Tooltip("Braking the AI plans on, in m/s². Decides how EARLY it lifts, not how hard it " +
+             "stops — a low value makes it brake sooner and more gently, which is what a car " +
+             "that looks smooth does. Below the car's real braking or it arrives too fast.")]
+    public float brakeAccel = 7f;
+
+    [Tooltip("Metres of track scanned ahead for corners to brake for. Must cover the braking " +
+             "distance from top speed: at 32 m/s and 7 m/s² that is 73 m, so 90 has margin.")]
+    public float brakeScan = 90f;
+
+    [Tooltip("m/s the car may exceed its corner speed before it brakes rather than coasts. A " +
+             "band, because a single threshold makes it alternate full throttle and full brake " +
+             "every frame at the limit, which is both slower and visibly twitchy.")]
+    public float speedTolerance = 1.5f;
 
     [Header("Separation")]
     [Tooltip("Cars closer than this push each other apart. 0 disables.")]
@@ -230,6 +270,15 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "a car that reads well over it while driving normally is following a line that is " +
              "not on the road, which is a WAYPOINT problem, not an AI one.")]
     [SerializeField] float offLineReadout;
+
+    [Tooltip("Speed the corner ahead allows, in m/s. Watch it against the car's actual speed: " +
+             "sitting at a low number on a straight means the track's corner radius is being " +
+             "misread, which is a WAYPOINT spacing problem — three samples landing on one " +
+             "straight segment report a hairpin as a straight and vice versa.")]
+    [SerializeField] float targetSpeedReadout;
+
+    [Tooltip("True while the AI is on the brakes for a corner it can see coming.")]
+    [SerializeField] bool brakingReadout;
 
     /// <summary>Where this car is round the track, or null on a destruction map.</summary>
     /// <remarks>
@@ -386,9 +435,34 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
                 // cars on the racing line, that would read as every direction being off the
                 // track — worst exactly where the track is most interesting. `there` is the
                 // ground height already measured above, so this costs nothing.
-                candidate.y = there + 0.5f;
+                // ⚠ SAMPLED ALONG THE PROBE, NOT JUST AT THE END OF IT. Scoring only where the
+                // probe LANDS is what let cars drive straight across the inside of a hairpin:
+                // the far side of the bend IS on the road, so the landing point attracted no
+                // penalty at all, while the progress it bought was enormous.
+                //
+                // This is the same lesson the hazard sweep learned and it is worth stating in
+                // the same words: point sampling answers "is that spot on the track", and the
+                // question is "does getting there stay on the track". The worst offset along the
+                // way is what the penalty is charged on.
+                float gained = 0f;
+                float offCentre = 0f;
+                int steps = Mathf.Max(1, pathSamples);
 
-                float gained = Line.Gain(candidate, out float offCentre);
+                for (int s = 1; s <= steps; s++)
+                {
+                    float f = s / (float)steps;
+                    Vector3 along = transform.position + dir * (reach * f);
+
+                    // Height interpolated between the two ground samples already taken rather
+                    // than cast for. The deviation that matters here is tens of metres sideways;
+                    // a couple of metres of height error does not change the answer, and four
+                    // extra raycasts per probe per car would.
+                    along.y = Mathf.Lerp(here, there, f) + 0.5f;
+
+                    float step = Line.Gain(along, out float off);
+                    if (s == steps) gained = step;
+                    if (off > offCentre) offCentre = off;
+                }
 
                 // THE PENALTY IS UNBOUNDED AND THAT IS DELIBERATE — it has to do two jobs at
                 // once, and a flat "off the track is disqualified" rule does the second one
@@ -407,6 +481,7 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
                 float wide = Mathf.Max(0f, offCentre - track.width * 0.5f * racingLineSlack);
 
                 worth = gained / Mathf.Max(1f, reach) * progressScale
+                        - offCentre * centrePull
                         - wide * wide * racingLineWeight;
             }
             else
@@ -743,10 +818,61 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
             return;
         }
 
+        if (Racing)
+        {
+            RaceThrottle(speed, slide);
+            return;
+        }
+
         // Lift for a corner, and lift MORE while sliding. Lifting is most of how a real driver
         // catches an oversteer, and it costs far less time than spinning does.
         float lift = 1f - Mathf.Abs(Steer) * cornerLift - slide * slipLift;
         Throttle = cruiseThrottle * Mathf.Clamp01(lift);
+    }
+
+    /// <summary>
+    /// Throttle and brake against a corner speed worked out from the track ahead.
+    /// </summary>
+    /// <remarks>
+    /// THE DESTRUCTION AI LIFTS BECAUSE IT IS ALREADY TURNING, WHICH IS TOO LATE BY DEFINITION.
+    /// `1 - |Steer| x cornerLift` only reacts once the steering is wound on, so the car arrives
+    /// at a corner at whatever speed it was doing and scrubs off the excess by understeering
+    /// through the exit. On a descent full of rocks that reads as chaotic and is fine; in a race
+    /// it reads as a car that cannot drive.
+    ///
+    /// With a track there is a real answer available: the tightest corner within braking distance
+    /// sets a speed for HERE, so the car lifts before the corner and is back on the throttle at
+    /// the apex. That single change is most of what "slow down and speed up when they should"
+    /// means.
+    ///
+    /// The slide lift is kept on top of it. Braking early is planning; lifting mid-slide is
+    /// reacting, and both are things a driver does.
+    /// </remarks>
+    void RaceThrottle(float speed, float slide)
+    {
+        float limit = track.SpeedLimit(Line.LapDistance, brakeScan, cornerGrip, brakeAccel);
+        targetSpeedReadout = Mathf.Min(limit, car.topSpeed);
+
+        if (speed > limit + speedTolerance)
+        {
+            // Full brake. Negative throttle against forward motion is what CarController reads
+            // as braking; it only becomes reverse below 1 m/s, which no corner speed reaches.
+            Throttle = -1f;
+            brakingReadout = true;
+            return;
+        }
+
+        brakingReadout = false;
+
+        // Coast through the band rather than switching between full throttle and full brake at a
+        // single threshold, which is slower AND visibly twitchy.
+        if (speed > limit)
+        {
+            Throttle = 0f;
+            return;
+        }
+
+        Throttle = cruiseThrottle * Mathf.Clamp01(1f - slide * slipLift);
     }
 
     /// <summary>Steering demand while deliberately turning round to face downhill again.</summary>
@@ -797,7 +923,11 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
             Gizmos.DrawLine(transform.position, transform.position + dir * fan);
         }
 
-        Gizmos.color = new Color(1f, 0.78f, 0.15f, 1f);
+        // Red while braking, so it is visible from the scene view whether the car is planning for
+        // the corner or arriving at it hopefully.
+        Gizmos.color = brakingReadout
+            ? new Color(1f, 0.3f, 0.25f, 1f)
+            : new Color(1f, 0.78f, 0.15f, 1f);
         Vector3 chosen = Quaternion.AngleAxis(chosenAngle, Vector3.up) * forward;
         Gizmos.DrawLine(transform.position, transform.position + chosen * (fan * 1.15f));
     }

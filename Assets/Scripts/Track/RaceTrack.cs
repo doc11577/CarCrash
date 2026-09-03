@@ -263,15 +263,98 @@ public class RaceTrack : MonoBehaviour
 
         distance = loop ? Mathf.Repeat(distance, Length) : Mathf.Clamp(distance, 0f, Length);
 
-        for (int i = 0; i < Segments; i++)
+        // Binary search, not a walk. This is called a couple of dozen times per car per decision
+        // once corner speeds are being worked out, and a linear scan makes that cost scale with
+        // how densely the track was clicked in — which is exactly the coupling the metre-based
+        // search window exists to remove.
+        int lo = 0, hi = Segments - 1;
+        while (lo < hi)
         {
-            if (distance > starts[i] + lengths[i] && i < Segments - 1) continue;
-
-            float t = lengths[i] < 1e-4f ? 0f : (distance - starts[i]) / lengths[i];
-            return Vector3.Lerp(points[i], points[Wrap(i + 1)], Mathf.Clamp01(t));
+            int mid = (lo + hi + 1) / 2;
+            if (starts[mid] <= distance) lo = mid;
+            else hi = mid - 1;
         }
 
-        return points[0];
+        float f = lengths[lo] < 1e-4f ? 0f : (distance - starts[lo]) / lengths[lo];
+        return Vector3.Lerp(points[lo], points[Wrap(lo + 1)], Mathf.Clamp01(f));
+    }
+
+    /// <summary>Mean distance between waypoints, in metres.</summary>
+    public float AverageSpacing => Segments > 0 ? Length / Segments : 1f;
+
+    /// <summary>
+    /// Radius of the corner at a point on the track, in metres. Huge on a straight.
+    /// </summary>
+    /// <remarks>
+    /// The circle through three samples either side (Menger curvature): <c>R = abc / 4A</c>.
+    ///
+    /// <paramref name="step"/> must be at least a waypoint spacing or the three samples can land
+    /// on ONE straight segment, the area comes out zero, and a hairpin is reported as a straight.
+    /// That failure is silent and total, so callers derive the step from
+    /// <see cref="AverageSpacing"/> rather than picking a number.
+    ///
+    /// FLATTENED, because the corner a car has to slow for is the one it steers through. A crest
+    /// is a tight radius in three dimensions and no steering input at all, and braking for it
+    /// would make the AI crawl over every rise on the map.
+    /// </remarks>
+    public float RadiusAt(float distance, float step)
+    {
+        Vector3 a = PointAtDistance(distance - step);
+        Vector3 b = PointAtDistance(distance);
+        Vector3 c = PointAtDistance(distance + step);
+
+        a.y = 0f;
+        b.y = 0f;
+        c.y = 0f;
+
+        float area = Vector3.Cross(b - a, c - a).magnitude * 0.5f;
+        if (area < 1e-3f) return float.PositiveInfinity;
+
+        return Vector3.Distance(a, b) * Vector3.Distance(b, c) * Vector3.Distance(c, a)
+               / (4f * area);
+    }
+
+    /// <summary>
+    /// The fastest a car may be going HERE and still make every corner in the next
+    /// <paramref name="scan"/> metres.
+    /// </summary>
+    /// <remarks>
+    /// Two bits of physics, and the second is what makes it anticipatory rather than reactive:
+    ///
+    ///   * A corner of radius R can be taken at <c>sqrt(lateral x R)</c>.
+    ///   * To be at that speed after braking over d metres, you may be at
+    ///     <c>sqrt(v_corner^2 + 2 x brake x d)</c> now.
+    ///
+    /// Taking the minimum over every sample ahead means the car brakes for the corner it can see
+    /// coming rather than for the one it is already in — which is the whole difference between an
+    /// AI that looks like it is driving and one that looks like it is reacting.
+    ///
+    /// Returns infinity on a track with no corners in range; callers clamp against their own top
+    /// speed.
+    /// </remarks>
+    public float SpeedLimit(float from, float scan, float lateral, float brake)
+    {
+        if (Segments == 0) return float.PositiveInfinity;
+
+        // TWO different steps, and conflating them is a real fault rather than a tidiness point.
+        // The curvature step must be at least a waypoint spacing or three samples land on one
+        // straight segment and a hairpin reads as a straight. The SCAN step must be fine or a
+        // sparsely clicked track skips over the corner entirely between samples and the car
+        // brakes late. On a track clicked in every 30 m those want 45 m and 15 m respectively.
+        float step = Mathf.Max(10f, AverageSpacing * 1.5f);
+        float scanStep = Mathf.Min(step, 15f);
+        float limit = float.PositiveInfinity;
+
+        for (float d = 0f; d <= scan; d += scanStep)
+        {
+            float radius = Mathf.Min(RadiusAt(from + d, step), 2000f);
+            float corner = Mathf.Sqrt(Mathf.Max(1f, lateral * radius));
+            float allowed = Mathf.Sqrt(corner * corner + 2f * Mathf.Max(0.5f, brake) * d);
+
+            if (allowed < limit) limit = allowed;
+        }
+
+        return limit;
     }
 
     /// <summary>Direction the track runs in, this many metres round the lap.</summary>

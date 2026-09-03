@@ -1246,6 +1246,76 @@ It had been left at its 22 m default on a **12 m** track, so nothing was ever of
 it from the width means narrowing the road narrows it too, instead of it being a second thing to
 remember.
 
+#### THE HAIRPIN CUT: SCORING WHERE A PROBE LANDS IS THE WRONG QUESTION — 2026-09-02
+
+Second report, with a screenshot: on a hairpin, a car left the road entirely and drove straight
+across the inside on the dirt. The waypoints were good — the line followed the road neatly through
+the bend — so this was not a layout problem.
+
+**The offset penalty was measured only at the point the probe LANDS.** On a hairpin the far side
+of the bend is on the road, so the landing point attracted no penalty at all, while the progress
+it bought was enormous — cutting 40 m of dirt buys well over 100 m of track. The penalty and the
+reward were both computed correctly and the answer was still "drive across the desert".
+
+**This is the same lesson the hazard sweep learned, in the same words:** point sampling answers
+*"is that spot on the track"*, and the question is *"does getting there stay on the track"*.
+
+`pathSamples` (3) now samples ALONG each probe and charges the penalty on the WORST offset found.
+A hairpin cut is scored at its midpoint — 25-30 m off the line — so the squared term charges it
+several hundred against a progress term that maxes out near 25. Heights for the intermediate
+samples are interpolated between the two ground heights already measured, not cast for: the
+deviation that matters is tens of metres sideways, and four extra raycasts per probe per car
+would not be.
+
+**`centrePull` (1.2 per metre) was added at the same time, on request: the cars should want to be
+on the middle of the line.** It is deliberately a SECOND term rather than a retune of the first,
+because the two want different shapes — this one is linear and gentle so a car is always mildly
+drawn back to the centre, `racingLineWeight` is squared and brutal and exists only to make
+leaving the road unthinkable. **Turn `centrePull` down toward 0.3 once racing is reliable:**
+hugging the exact centre is tidy, but it makes passing impossible and reads as a train.
+
+#### Braking for a corner it can SEE — 2026-09-02
+
+Asked for at the same time: *"make them smarter, so they slow and speed up when they should."*
+
+**The destruction AI lifts because it is already turning, which is too late by definition.**
+`1 - |Steer| x cornerLift` only reacts once the steering is wound on, so the car arrives at a
+corner at whatever speed it was doing and scrubs the excess off by understeering through the exit.
+On a rock-strewn descent that reads as chaotic and is fine; in a race it reads as a car that
+cannot drive.
+
+With a track there is a real answer available, and it is two lines of physics:
+
+- a corner of radius R can be taken at **`sqrt(cornerGrip x R)`**
+- to be at that speed after braking over d metres, you may be at
+  **`sqrt(v_corner² + 2 x brakeAccel x d)`** now
+
+`RaceTrack.SpeedLimit` takes the minimum over every sample in the next `brakeScan` (90 m), so the
+car brakes for the corner it can see rather than the one it is in. Radius comes from the circle
+through three samples — Menger curvature, `R = abc / 4A`.
+
+Three things that are load-bearing:
+
+- **The curvature step and the scan step are DIFFERENT, and conflating them breaks it both ways.**
+  The curvature step must be at least a waypoint spacing (1.5x) or three samples land on one
+  straight segment, the area comes out zero, and **a hairpin is reported as a straight**. The scan
+  step must be fine (15 m) or a sparsely clicked track skips over the corner between samples and
+  the car brakes late.
+- **The radius is measured FLAT.** A crest is a tight radius in three dimensions and no steering
+  input at all; braking for it would make the AI crawl over every rise on the map.
+- **There is a tolerance band, not a threshold.** `speedTolerance` (1.5 m/s) separates coast from
+  brake, because a single threshold makes the car alternate full throttle and full brake every
+  frame at the limit — slower AND visibly twitchy.
+
+`PointAtDistance` became a binary search at the same time. It is called a couple of dozen times
+per car per decision now, and a linear walk would make that cost scale with how densely the track
+was clicked in — reintroducing exactly the coupling the metre-based search window removed.
+
+**Tuning, in the order to reach for it:** `cornerGrip` (12) sets how fast corners are taken — too
+high and they run wide at every exit, too low and they crawl. `brakeAccel` (7) decides how EARLY
+they lift rather than how hard they stop; lower is smoother. Watch `targetSpeedReadout` against
+actual speed, and `brakingReadout` — the chosen-direction gizmo turns red on the brakes.
+
 **Known and NOT yet addressed, because it is tuning and needs a run first:** `speedBoost` is 1.15
 on the traffic prefabs, which is right for traffic to catch and wrong for a fair race, and it is
 applied in `Awake` so the spawner cannot change it after `Instantiate`. And `TrafficTruck` in the
