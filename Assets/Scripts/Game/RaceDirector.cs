@@ -339,10 +339,14 @@ public class RaceDirector : MonoBehaviour
                              this);
         }
 
+        // Named for the RESULTS SCREEN, not after the GameObject. The spawner calls them
+        // "Traffic03_TrafficCar", which is the right name in a hierarchy and unreadable in a
+        // finishing order.
+        int rival = 0;
         foreach (TrafficDriver driver in TrafficDriver.All)
         {
             if (driver == null || !driver.Racing) continue;
-            Add(driver.transform, driver.name, false, driver);
+            Add(driver.transform, "RIVAL " + (++rival), false, driver);
         }
 
         racerCount = racers.Count;

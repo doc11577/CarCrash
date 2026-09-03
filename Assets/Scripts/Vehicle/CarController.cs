@@ -792,10 +792,18 @@ public class CarController : MonoBehaviour
         // Scaled together, deliberately. More torque with the same spin cap just reaches the same
         // ceiling sooner and still feels locked; raising the cap without the torque gives a car
         // that is allowed to rotate faster than it can make itself rotate.
-        float limit = maxAirSpin * airControlScale * Mathf.Deg2Rad;
+        //
+        // Zero is read as 1, not as "no air control". This field was added to a component that
+        // already exists in four prefabs and four scenes, and a serialized 0 arriving from
+        // somewhere would silently switch air control off entirely with nothing to say why —
+        // which is the exact shape of failure this project keeps paying for. There is no reason
+        // to want 0 here; `airControlTorque` is how you turn air control off.
+        float scale = airControlScale > 0.01f ? airControlScale : 1f;
+
+        float limit = maxAirSpin * scale * Mathf.Deg2Rad;
         Vector3 spin = rb.angularVelocity;
 
-        float torque = airControlTorque * airControlScale;
+        float torque = airControlTorque * scale;
         float pitchTorque = -pitch * torque;
         float rollTorque = -roll * torque;
 
