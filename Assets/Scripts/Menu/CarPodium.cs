@@ -120,6 +120,9 @@ public class CarPodium : MonoBehaviour
     public float StageOffset { get; set; }
 
     float stageShift;
+
+    /// <summary>The car's local Y on the mount, from MeasureCar. See the re-assert in Update.</summary>
+    float carLift;
     Material backdropMaterial;
     Transform backdrop;
     Transform limbo;
@@ -340,8 +343,7 @@ public class CarPodium : MonoBehaviour
     {
         if (current == null) return;
 
-        CarPaint paint = current.GetComponent<CarPaint>();
-        if (paint != null) paint.Apply(colour);
+        CarPaint.Ensure(current).Apply(colour);
     }
 
     /// <summary>Put a car on the podium. Pass null to clear it.</summary>
@@ -386,6 +388,7 @@ public class CarPodium : MonoBehaviour
             limbo.gameObject.SetActive(false);
         }
 
+        carLift = 0f;
         current = Instantiate(prefab, limbo);
         Neutralise(current);
 
@@ -400,6 +403,11 @@ public class CarPodium : MonoBehaviour
         {
             lastLift = mount.position.y - bounds.min.y;
             current.transform.position += Vector3.up * lastLift;
+
+            // Remembered in LOCAL terms, because Update re-asserts the car every frame and a
+            // world offset would have to be reconverted each time -- and would drift with the
+            // mount once the stage slides.
+            carLift = current.transform.localPosition.y;
             lastShown = prefab.name;
         }
         else
@@ -586,20 +594,36 @@ public class CarPodium : MonoBehaviour
         // Slide the stage toward wherever the paint shop wants it. Eased rather than snapped:
         // the car moving aside is the transition INTO the paint shop, and a jump reads as the
         // panel having shoved it.
-        if (!Mathf.Approximately(stageShift, StageOffset) || stageShift != 0f)
-        {
-            stageShift = Mathf.Lerp(stageShift, StageOffset, 1f - Mathf.Exp(-dt * 9f));
+        //
+        // **Applied UNCONDITIONALLY and re-derived from scratch every frame, rather than nudged.**
+        // The first version only ran while it thought a move was in progress and left the car
+        // sitting slightly off-centre on the plinth after the panel closed. Rather than hunt for
+        // which frame dropped the last write, the whole placement is now recomputed from
+        // `stageShift` each frame, so the position is a pure function of one number and cannot
+        // accumulate error or be left half-applied.
+        //
+        // The lerp is SNAPPED once it is within a millimetre, because `Mathf.Lerp` toward a
+        // target only approaches it — leaving a permanent sub-millimetre offset that is exactly
+        // the kind of thing that is invisible in isolation and visible against a plinth edge.
+        stageShift = Mathf.Abs(StageOffset - stageShift) < 0.001f
+            ? StageOffset
+            : Mathf.Lerp(stageShift, StageOffset, 1f - Mathf.Exp(-dt * 9f));
 
-            Vector3 world = (view != null ? view.transform.right : Vector3.right) * stageShift;
-            Vector3 local = transform.InverseTransformVector(world);
+        Vector3 world = (view != null ? view.transform.right : Vector3.right) * stageShift;
+        Vector3 local = transform.InverseTransformVector(world);
 
-            if (podium != null)
-                podium.transform.localPosition =
-                    new Vector3(local.x, podiumHeight * 0.5f, local.z);
+        if (podium != null)
+            podium.transform.localPosition = new Vector3(local.x, podiumHeight * 0.5f, local.z);
 
-            if (mount != null)
-                mount.localPosition = new Vector3(local.x, podiumHeight, local.z);
-        }
+        if (mount != null)
+            mount.localPosition = new Vector3(local.x, podiumHeight, local.z);
+
+        // The car sits at the mount's origin plus its measured lift, and nothing else may move
+        // it. Re-asserted rather than set once in Show, so whatever nudged it — a stray parent
+        // change, a rebuild mid-slide — it is centred again on the next frame instead of staying
+        // wrong until the car is swapped.
+        if (current != null)
+            current.transform.localPosition = new Vector3(0f, carLift, 0f);
 
         if (mount != null)
         {

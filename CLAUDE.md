@@ -392,6 +392,52 @@ persistence; `MenuUI` builds the panel; `PlayerCarSpawner` applies the choice on
   the sign that gets guessed wrong once and hard-coded around.
 - The panel closes when the garage is left or the car is changed: it shows what THIS car wears.
 
+#### Why the paint did nothing at first — 2026-09-02
+
+**Three of the four player prefabs had no `CarPaint` component at all.** `CarAventador` had one;
+`CarE30`, `CarP72` and `CarTruck` did not. Every traffic prefab did, because traffic has been
+tinted since it existed — **the player's car had simply never needed painting before**, so nothing
+had ever noticed. `GetComponent<CarPaint>()` returned null and both the podium preview and the
+spawner skipped in silence.
+
+`CarPaint.Ensure(GameObject)` adds one when it is missing, rather than the component being added
+by hand across four prefabs — being paintable is now a fact about how the game uses ANY car, not
+a per-car setting. A prefab that needs a non-default material name still overrides by carrying its
+own component, which is exactly what the Aventador does.
+
+**The material names were the other half of the worry, and they were fine.** E30, P72 and the
+truck all have a `Body.mat`, which is the `paintMaterialName` default; the Aventador's is
+`Lamborginhi_base_phong` and its prefab already said so. Worth checking before adding a component
+whose default might match nothing — `Collect` logs every material on the model when it matches
+none, which is the only reason the P72's old `Standard32B531` was ever found.
+
+**PAINT is offered on EVERY car, owned or not.** Choosing a colour for a car you have not bought
+is harmless — the choice is stored against the car id and worn the moment it is owned — and
+hiding the button on locked cars made the feature look absent.
+
+**The car sitting slightly off-centre after the panel closed was fixed by making the placement a
+pure function rather than hunting the frame that dropped a write.** The stage offset is now
+recomputed from `stageShift` every frame unconditionally, the lerp SNAPS once within a millimetre
+(`Mathf.Lerp` toward a target only ever approaches it), and the car's local position is
+re-asserted from a stored lift each frame. Anything that nudges it is corrected on the next frame
+instead of persisting until the car is swapped.
+
+#### Clicked buttons went grey and would not light up again
+
+**uGUI ranks SELECTED above HIGHLIGHTED**, and a clicked button holds the selection until
+something else takes it. So after one click a button draws `selectedColor` even with the pointer
+still on it — grey, and no amount of hovering brings the gold back. Worst on the garage arrows,
+which are meant to be clicked repeatedly without moving the mouse.
+
+**This is the other half of a fix already in this file.** Matching `selectedColor` to `normalColor`
+(recorded under the garage carousel) stopped every clicked button staying LIT; it could not
+restore the hover, because the state machine never reaches Highlighted while the button holds the
+selection. `UiKit` now clears the EventSystem selection after every button click. Both halves are
+needed: the colour for when the mouse leaves, the deselect for when it stays.
+
+Text fields are not routed through it, and clearing the selection on a button click is what should
+happen anyway — it blurs the field, which is what commits a typed value in the dev tuner.
+
 #### Save code v2 — and the delimiter lesson, applied properly this time
 
 v1 was `version|gears|best|owned…|checksum` where the owned list was **itself** pipe-delimited, so

@@ -94,8 +94,9 @@ public class PlayerCarSpawner : MonoBehaviour
         //
         // CarPaint may be absent on a prefab that was never set up for tinting, which is not an
         // error — it just means that car is whatever colour its texture is.
-        CarPaint paint = car.GetComponent<CarPaint>();
-        if (paint != null) paint.Apply(CarColours.For(entry.id).colour);
+        // Ensure, not GetComponent: three of the four player prefabs carry no CarPaint, so a
+        // plain lookup returned null and the chosen paint was silently dropped.
+        CarPaint.Ensure(car).Apply(CarColours.For(entry.id).colour);
     }
 
     void OnDestroy()

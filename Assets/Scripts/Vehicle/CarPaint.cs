@@ -97,6 +97,29 @@ public class CarPaint : MonoBehaviour
     }
 
     /// <summary>Repaint. Safe to call before Start — it collects on demand.</summary>
+    /// <summary>
+    /// The car's <see cref="CarPaint"/>, adding one if the prefab has none. Never returns null.
+    /// </summary>
+    /// <remarks>
+    /// **Three of the four player prefabs had no CarPaint at all**, which is how the paint shop
+    /// shipped doing nothing: `GetComponent&lt;CarPaint&gt;()` came back null and both the podium
+    /// preview and the spawner quietly skipped. Traffic prefabs all had one, because traffic has
+    /// been tinted since it existed — the player's car never needed painting until now.
+    ///
+    /// Added in code rather than by hand across four prefabs because it is a fact about how the
+    /// game uses a car, not a per-car setting: EVERY car is paintable now. A prefab that wants a
+    /// non-default material name still overrides it by carrying its own component, which is what
+    /// the Aventador does (`Lamborginhi_base_phong`) — an added one only ever supplies the
+    /// default, and `Collect` already logs every material on the model when nothing matches.
+    /// </remarks>
+    public static CarPaint Ensure(GameObject car)
+    {
+        if (car == null) return null;
+
+        CarPaint paint = car.GetComponent<CarPaint>();
+        return paint != null ? paint : car.AddComponent<CarPaint>();
+    }
+
     public void Apply(Color paint)
     {
         colour = paint;

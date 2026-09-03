@@ -121,7 +121,7 @@ public static class UiKit
         UnityEngine.UI.Button button = go.AddComponent<UnityEngine.UI.Button>();
         button.targetGraphic = background;
 
-        if (onClick != null) button.onClick.AddListener(() => onClick());
+        if (onClick != null) button.onClick.AddListener(() => { Deselect(); onClick(); });
 
         Centre((RectTransform)go.transform, pos, box);
 
@@ -131,6 +131,31 @@ public static class UiKit
 
         Tint(button, accent);
         return button;
+    }
+
+    /// <summary>
+    /// Drop the EventSystem's selection. Called after every button click.
+    /// </summary>
+    /// <remarks>
+    /// **uGUI ranks SELECTED above HIGHLIGHTED**, and a clicked button stays selected until
+    /// something else is. So once clicked, a button draws its `selectedColor` even while the
+    /// pointer is still sitting on it — it goes grey and will not light up again however much you
+    /// hover it, and the arrows are the worst case because they are meant to be clicked
+    /// repeatedly without moving the mouse.
+    ///
+    /// This is the OTHER half of the fix already recorded on `Tint`. Setting `selectedColor` to
+    /// match normal stopped every clicked button staying lit; it could not restore the hover,
+    /// because the state machine never reaches Highlighted while the button holds the selection.
+    /// Both are needed: the colour so a clicked button looks right when the mouse leaves, and the
+    /// deselect so it looks right when the mouse stays.
+    ///
+    /// Safe for the text fields, which are not routed through here — and clearing the selection
+    /// when a button is clicked is what should happen anyway: it blurs the field, which is what
+    /// commits a typed value in the dev tuner.
+    /// </remarks>
+    static void Deselect()
+    {
+        if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
     }
 
     /// <summary>
@@ -158,7 +183,7 @@ public static class UiKit
 
         UnityEngine.UI.Button button = go.AddComponent<UnityEngine.UI.Button>();
         button.targetGraphic = block;
-        if (onClick != null) button.onClick.AddListener(() => onClick());
+        if (onClick != null) button.onClick.AddListener(() => { Deselect(); onClick(); });
 
         Centre((RectTransform)go.transform, pos, box);
 

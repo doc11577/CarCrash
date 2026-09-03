@@ -969,10 +969,10 @@ public class MenuUI : MonoBehaviour
         // of the preview is that the same instance changes colour.
         if (podium != null) podium.Preview(CarColours.For(car.id).colour);
 
-        // Nothing to paint on a car you do not own, and offering it would raise the question of
-        // whether buying paint buys the car.
-        if (paintButton != null && !paintOpen)
-            paintButton.gameObject.SetActive(car.Owned);
+        // Offered on EVERY car, owned or not. Choosing a colour for a car you have not bought yet
+        // is harmless -- the choice is stored against the car id and worn the moment it is
+        // owned -- and hiding the button on locked cars made the feature look absent.
+        if (paintButton != null && !paintOpen) paintButton.gameObject.SetActive(true);
 
         if (carStatus != null)
         {
