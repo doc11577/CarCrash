@@ -26,7 +26,7 @@ using UnityEngine;
 /// it happen), and cheap anti-cheat: a car cannot gain half a lap by cutting the infield, because
 /// the follower will not accept a segment it could not have reached.
 ///
-/// COST. One follower update per racer per frame searches <see cref="searchWindow"/> segments
+/// COST. One follower update per racer per frame searches <see cref="searchDistance"/> metres of track
 /// either way — 13 point-to-segment projections at the default, about a hundred for a full grid
 /// of eight. That is nothing next to the four SphereCasts each of those cars already does every
 /// physics step.
@@ -55,18 +55,42 @@ public class RaceTrack : MonoBehaviour
     public float width = 18f;
 
     [Header("Following")]
-    [Tooltip("How many segments either side of its current one a racer will consider when it " +
-             "updates. This is the value that makes a crossover safe, so do not raise it far.\n\n" +
-             "It has to be big enough that a car cannot skip past it in one frame: at 60 m/s and " +
-             "20 m between waypoints, a frame is 1 m, so 6 is enormously safe. Raise it only if " +
-             "waypoints are very closely spaced, and lower it toward 3 if a track doubles back " +
-             "so tightly that the wrong lane is within reach.")]
-    [Range(2, 24)] public int searchWindow = 6;
+    [Tooltip("How far along the track, IN METRES, a racer will look either side of where it " +
+             "already is. This is the value that makes a crossover safe: anything further round " +
+             "the lap than this is invisible, so a car under a bridge cannot be mistaken for one " +
+             "on it.\n\n" +
+             "⚠ IT MUST COMFORTABLY EXCEED THE AI'S PROBE REACH, which is about 60 m at racing " +
+             "speed. A probe aimed at track outside this window has its progress silently " +
+             "CLAMPED to the window edge, so several probes score the same and the car stops " +
+             "steering for the corner it can see.\n\n" +
+             "In metres rather than in waypoints on purpose — how densely a track is clicked in " +
+             "is a layout choice, and it must not quietly change how far the AI can see.")]
+    public float searchDistance = 130f;
 
-    [Tooltip("Metres from the centreline beyond which a racer counts as off track. Half the " +
-             "width plus some slack. Only used for reporting and for respawn decisions — " +
-             "nothing forces a car back on.")]
-    public float offTrackDistance = 22f;
+    /// <summary>
+    /// <see cref="searchDistance"/> converted to segments, using the average waypoint spacing.
+    /// </summary>
+    /// <remarks>
+    /// Recomputed in <see cref="Rebuild"/>, so adding waypoints to a corner cannot shorten the
+    /// AI's reach. This was a real fault and not a theoretical one: at six segments and a track
+    /// clicked in every 9 m, the window was 54 m against a probe reach of 60 — so on a corner
+    /// every probe returned "the far end of the window", the scores tied, the straightness bias
+    /// broke the tie, and the car drove straight on into the scenery. It looks exactly like an
+    /// AI that cannot see corners, because that is what it is.
+    /// </remarks>
+    int window = 6;
+
+    [Tooltip("Metres of slack OUTSIDE the road, past which a racer counts as off track. About a " +
+             "car and a half.\n\n" +
+             "Deliberately a margin rather than an absolute distance: it is measured from Width, " +
+             "so narrowing the road narrows this with it. As an absolute number it is a second " +
+             "thing to remember to change, and forgetting reads as the AI happily driving into " +
+             "the scenery — the off-track test is what stops it treating a corner cut as a " +
+             "shortcut.")]
+    public float offTrackMargin = 5f;
+
+    /// <summary>Metres from the centreline at which a racer is off the track.</summary>
+    public float OffTrackDistance => width * 0.5f + offTrackMargin;
 
     [Header("Validation")]
     [Tooltip("Waypoints closer together than this are reported as a mistake — usually a " +
@@ -83,9 +107,41 @@ public class RaceTrack : MonoBehaviour
              "on the gizmo as the line stabbing backwards and returning.")]
     public float maxCornerAngle = 110f;
 
+    [Header("Gizmo")]
+    [Tooltip("Draw the corridor as rungs that are RAYCAST against the ground, so a corridor " +
+             "hanging off the edge of the road shows up in red. Only drawn while the track is " +
+             "SELECTED, and never in play mode — it is a few hundred raycasts a repaint.\n\n" +
+             "This is the check that answers 'is the width actually on the road', which a plain " +
+             "line cannot: a centreline through a gap the car does not fit through looks perfect.")]
+    public bool checkGroundInGizmo = true;
+
+    [Tooltip("Metres between the cross rungs of the corridor gizmo. Smaller finds a narrower " +
+             "pinch point and costs more raycasts.")]
+    public float rungSpacing = 12f;
+
+    [Tooltip("Metres a corridor EDGE may sit above or below the road under the centreline before " +
+             "the rung is drawn red. Past this the edge is over a wall, a barrier top or thin " +
+             "air rather than over the road.")]
+    public float edgeTolerance = 4f;
+
+    [Tooltip("Ceiling on gizmo rungs, so a long track cannot make the scene view crawl.")]
+    public int maxRungs = 160;
+
+    /// <summary>Metres a waypoint may float above the road before it is a problem.</summary>
+    /// <remarks>Shared by the validator and the gizmo, so what is drawn is what is reported.</remarks>
+    const float MaxFloat = 6f;
+
+    /// <summary>Metres a waypoint may sit below the road before it is a problem.</summary>
+    const float MaxSink = 1.5f;
+
     [Header("Read-only — watch these in play mode")]
     [SerializeField] int waypoints;
     [SerializeField] float lapLength;
+
+    [Tooltip("Search Distance converted into waypoints, from the average spacing of THIS track. " +
+             "If this reads 3 on a densely clicked track, Search Distance is too small and the " +
+             "AI cannot see far enough round a corner to steer for it.")]
+    [SerializeField] int windowSegments;
 
     /// <summary>Waypoint positions in world space, in order. Index 0 is the start/finish line.</summary>
     Vector3[] points = new Vector3[0];
@@ -154,6 +210,15 @@ public class RaceTrack : MonoBehaviour
         Length = running;
         waypoints = n;
         lapLength = running;
+
+        // The search window in SEGMENTS, derived from how densely this track happens to be
+        // clicked in. Never fewer than 3, so a track of four enormous segments still has
+        // somewhere to look, and never more than the whole track.
+        float average = segments > 0 ? running / segments : 1f;
+        window = segments == 0
+            ? 3
+            : Mathf.Clamp(Mathf.CeilToInt(searchDistance / Mathf.Max(1f, average)), 3, segments);
+        windowSegments = window;
     }
 
     int Wrap(int i)
@@ -254,7 +319,7 @@ public class RaceTrack : MonoBehaviour
     /// <remarks>
     /// This is the class that makes the whole thing work, and the important part of it is what
     /// it REFUSES to do: it never searches the whole track. <see cref="Advance"/> looks only at
-    /// the segments within <see cref="searchWindow"/> of the one it is already on, so a car
+    /// the segments within <see cref="searchDistance"/> metres of the one it is already on, so a car
     /// sitting on a bridge cannot be assigned to the road underneath, and a car that is
     /// teleported keeps its old place until something calls <see cref="Snap"/>.
     ///
@@ -276,7 +341,7 @@ public class RaceTrack : MonoBehaviour
         /// <summary>Completed laps since this follower was created or snapped.</summary>
         public int Lap { get; private set; }
 
-        /// <summary>Metres from the centreline. Compare against <see cref="offTrackDistance"/>.</summary>
+        /// <summary>Metres from the centreline. Compare against <see cref="OffTrackDistance"/>.</summary>
         public float Offset { get; private set; }
 
         /// <summary>Closest point on the centreline to the racer.</summary>
@@ -376,7 +441,7 @@ public class RaceTrack : MonoBehaviour
             int segments = track.Segments;
             if (segments == 0) return;
 
-            int window = Mathf.Clamp(track.searchWindow, 1, segments);
+            int window = Mathf.Min(track.window, segments);
             float best = float.PositiveInfinity;
             int bestOffset = 0;
             float bestAlong = Along;
@@ -455,7 +520,7 @@ public class RaceTrack : MonoBehaviour
             int segments = track.Segments;
             if (segments == 0) return 0f;
 
-            int window = Mathf.Clamp(track.searchWindow, 1, segments);
+            int window = Mathf.Min(track.window, segments);
             float best = float.PositiveInfinity;
             int bestOffset = 0;
             float bestAlong = 0f;
@@ -492,7 +557,7 @@ public class RaceTrack : MonoBehaviour
         }
 
         /// <summary>True while the racer is further from the centreline than the track is wide.</summary>
-        public bool OffTrack => Offset > track.offTrackDistance;
+        public bool OffTrack => Offset > track.OffTrackDistance;
     }
 
     /// <summary>Make a follower for a racer standing at <paramref name="at"/>.</summary>
@@ -562,15 +627,43 @@ public class RaceTrack : MonoBehaviour
             }
 
             float above = points[i].y - hit.point.y;
-            if (above > 6f)
+            if (above > MaxFloat)
                 problems.Add($"Waypoint {i} floats {above:0.0} m above the ground. Drop it onto " +
                              "the road — respawns put a car exactly here.");
-            else if (above < -1.5f)
+            else if (above < -MaxSink)
                 problems.Add($"Waypoint {i} is {-above:0.0} m UNDER the ground. Respawns there " +
                              "put a car inside the scenery.");
+
+            // The corridor, not just the line. `width` is what the AI is allowed to move across
+            // to take a line or a pass, so a waypoint whose corridor hangs over a drop is an
+            // instruction to drive off it — and that is invisible on a centreline.
+            Vector3 along = points[Wrap(i + 1)] - points[i];
+            if (along.sqrMagnitude < 1e-4f) continue;
+
+            Vector3 side = Vector3.Cross(Vector3.up, along.normalized) * (width * 0.5f);
+            EdgeProblem(problems, i, "left", points[i] + side, hit.point.y);
+            EdgeProblem(problems, i, "right", points[i] - side, hit.point.y);
         }
 
         return problems;
+    }
+
+    void EdgeProblem(List<string> problems, int index, string which, Vector3 at, float roadY)
+    {
+        if (!Ground(at, out float y))
+        {
+            problems.Add($"Waypoint {index}: the {which} edge of the corridor has no ground " +
+                         $"under it. Either the track is off the road here, or Width " +
+                         $"({width:0} m) is wider than the road is.");
+            return;
+        }
+
+        float step = y - roadY;
+        if (Mathf.Abs(step) > edgeTolerance)
+            problems.Add($"Waypoint {index}: the {which} edge of the corridor is {step:0.0} m " +
+                         $"{(step > 0f ? "above" : "below")} the road under the centreline — a " +
+                         $"wall, a barrier top or a drop. Move the waypoint over, or narrow " +
+                         $"Width from {width:0} m.");
     }
 
     void Start()
@@ -640,5 +733,104 @@ public class RaceTrack : MonoBehaviour
 
         Gizmos.color = new Color(1f, 0.78f, 0.15f, 1f);
         for (int i = 0; i < Count; i++) Gizmos.DrawSphere(points[i], 1.2f);
+
+        if (!checkGroundInGizmo) return;
+
+        // Never in play mode. This is a few hundred raycasts per repaint, and the whole point of
+        // it is laying the track out — by the time cars are driving it, the answer is on screen
+        // in the form of cars falling off the road.
+        if (Application.isPlaying) return;
+
+        DrawGroundChecks();
+    }
+
+    /// <summary>
+    /// Raycasts the corridor against the ground and draws what is NOT over road in red.
+    /// </summary>
+    /// <remarks>
+    /// The reason this exists rather than a plain ribbon: a centreline drawn through a gap the
+    /// car does not fit through looks perfect, and so does a corridor whose outer half is hanging
+    /// over the side of a dam. A line in space cannot show either. Three casts per rung — the
+    /// centre and both edges — turn "the width is 18" into something visible.
+    ///
+    /// The centre's ground height is the reference rather than the waypoint's own Y, because the
+    /// question is whether the EDGES are on the same road as the middle, not whether they are at
+    /// the height the waypoint happens to have been dropped at.
+    /// </remarks>
+    void DrawGroundChecks()
+    {
+        Color good = new Color(0.35f, 0.9f, 0.5f, 0.85f);
+        Color bad = new Color(1f, 0.25f, 0.2f, 1f);
+
+        int drawn = 0;
+        float spacing = Mathf.Max(2f, rungSpacing);
+
+        for (int i = 0; i < Segments && drawn < maxRungs; i++)
+        {
+            Vector3 a = points[i];
+            Vector3 b = points[Wrap(i + 1)];
+            Vector3 span = b - a;
+            if (span.sqrMagnitude < 1e-6f) continue;
+
+            Vector3 side = Vector3.Cross(Vector3.up, span.normalized) * (width * 0.5f);
+            int rungs = Mathf.Max(1, Mathf.CeilToInt(span.magnitude / spacing));
+
+            for (int k = 0; k < rungs && drawn < maxRungs; k++, drawn++)
+            {
+                Vector3 centre = Vector3.Lerp(a, b, k / (float)rungs);
+
+                bool centreOk = Ground(centre, out float centreY);
+                bool leftOk = Ground(centre + side, out float leftY);
+                bool rightOk = Ground(centre - side, out float rightY);
+
+                bool leftOnRoad = leftOk && Mathf.Abs(leftY - centreY) <= edgeTolerance;
+                bool rightOnRoad = rightOk && Mathf.Abs(rightY - centreY) <= edgeTolerance;
+
+                Gizmos.color = centreOk && leftOnRoad && rightOnRoad ? good : bad;
+                Gizmos.DrawLine(centre + side, centre - side);
+
+                // A stub standing up at whichever edge is off, so it says WHICH side is wrong
+                // rather than only that something is. A rung red at both ends is a corridor too
+                // wide for the road; red at one end is a centreline pushed off to that side.
+                if (!leftOnRoad) Gizmos.DrawLine(centre + side, centre + side + Vector3.up * 4f);
+                if (!rightOnRoad) Gizmos.DrawLine(centre - side, centre - side + Vector3.up * 4f);
+            }
+        }
+
+        // A dropper under every waypoint, using the validator's own tolerances, so the thing the
+        // Validate button reports is also the thing the scene view shows.
+        for (int i = 0; i < Count; i++)
+        {
+            if (!Ground(points[i], out float y))
+            {
+                Gizmos.color = bad;
+                Gizmos.DrawLine(points[i], points[i] - Vector3.up * 12f);
+                continue;
+            }
+
+            float above = points[i].y - y;
+            Gizmos.color = above > MaxFloat || above < -MaxSink ? bad : good;
+
+            Vector3 onGround = new Vector3(points[i].x, y, points[i].z);
+            Gizmos.DrawLine(points[i], onGround);
+            Gizmos.DrawLine(onGround + Vector3.right * 1.2f, onGround - Vector3.right * 1.2f);
+            Gizmos.DrawLine(onGround + Vector3.forward * 1.2f, onGround - Vector3.forward * 1.2f);
+        }
+    }
+
+    /// <summary>Height of the ground under a point, cast from well above it.</summary>
+    static bool Ground(Vector3 at, out float y)
+    {
+        // From 60 m up, so a point left UNDER the road is still found rather than the ray
+        // starting inside the scenery and reporting nothing.
+        if (Physics.Raycast(at + Vector3.up * 60f, Vector3.down, out RaycastHit hit, 200f, ~0,
+                            QueryTriggerInteraction.Ignore))
+        {
+            y = hit.point.y;
+            return true;
+        }
+
+        y = at.y;
+        return false;
     }
 }

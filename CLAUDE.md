@@ -1033,6 +1033,19 @@ car". Everything else in race mode reads position from it.
   through a gap the car cannot fit through looks perfect as a line, and a lap laid out the wrong
   way round looks perfect too.
 
+- **Selected, the corridor is RAYCAST against the ground and drawn red where it is not on road.**
+  Three casts per rung — centre and both edges — turn "Width is 12" into something visible: a red
+  rung means an edge is over a wall, a barrier top or thin air, and a stub stands up at whichever
+  edge is wrong so it says which side. Every waypoint also gets a dropper down to the ground,
+  coloured by the validator's own tolerances, so what the Validate button reports in words is what
+  the scene view shows in place. **Selected only, and never in play mode** — it is a few hundred
+  raycasts a repaint, and by the time cars are driving it the answer is on screen in the form of
+  cars falling off the road.
+
+- **`Validate` checks the EDGES too, not just the waypoints.** `width` is what the AI is allowed
+  to move across to take a line or a pass, so a waypoint whose corridor hangs over a drop is an
+  instruction to drive off it — and that is invisible on a centreline.
+
 #### `Editor/RaceTrackEditor.cs` — click along the road
 
 The honest cost of "hand-placed empties are tedious once and visual forever" is creating, naming,
@@ -1128,6 +1141,47 @@ only correct if its blue arrow agrees with the track to within a couple of degre
 checks that: eight cars start slightly sideways, all correct their line in the first second, and
 the field is scattered before the flag drops. `GridSlot` is one function for the spawn and the
 gizmo, so what is drawn is what happens.
+
+#### Why they cut corners into the scenery — two causes, fixed 2026-09-02
+
+Reported on the first run on The Dam: *"they want to cut corners and end up flying straight into
+a rock thing for no reason."* Two independent faults, and the first one is the interesting one.
+
+**1. THE SEARCH WINDOW WAS IN WAYPOINTS, AND THE TRACK WAS CLICKED IN DENSELY.** `searchWindow`
+was 6 SEGMENTS either way, sized against an assumed 20-30 waypoints. The Dam was laid out with
+**126**, so a segment is roughly 9 m and the window was **54 m** — against a probe reach of about
+**60 m at racing speed**.
+
+A probe aimed past the window edge has its progress silently CLAMPED to that edge. So on a
+corner, several probes returned the same number, the scores tied, `straightBias` broke the tie in
+favour of straight ahead, and the car drove straight on into the outside of the bend. **It looks
+exactly like an AI that cannot see corners, because that is what it was.**
+
+`searchDistance` is now in **METRES** (130) and converted to segments at `Rebuild` from the
+track's own average spacing. **How densely a track is clicked in is a layout choice and must not
+quietly change how far the AI can see.** `windowSegments` is on the component as a read-only
+field: if it reads 3 on a dense track, the distance is too small.
+
+**2. THE OFF-LINE PENALTY WAS LINEAR, AND LINEAR LOSES THIS ARGUMENT.** Progress alone always
+prefers the inside of a corner, and by more than it looks: **a chord across a bend covers MORE
+track than driving round it**, so a cut can score above the probe's own reach. At
+`progressScale 10` a cut paid about +4 and a linear `racingLineWeight 0.9` charged 3.6 for being
+4 m off the road. The cut won, every time, on arithmetic.
+
+**The penalty is now SQUARED**, so 4 m off costs 16 rather than 3.6, and `racingLineSlack` (0.75)
+lets the AI use most of the road for free before any of it applies.
+
+**⚠ AND IT IS UNBOUNDED ON PURPOSE — do not "fix" that with an off-track cut-off.** A flat "off
+the track is disqualified" rule was written first and is actively worse: a spun-off car then has
+seven identical scores, identical scores mean the first probe wins, and the first probe is full
+lock — into the scenery, permanently. A penalty that keeps growing means the LEAST wrong direction
+still wins, so the same term that stops corner cutting is also what steers a car back onto the
+road. One rule, two jobs.
+
+`offTrackDistance` also stopped being an absolute number: it is now `width / 2 + offTrackMargin`.
+It had been left at its 22 m default on a **12 m** track, so nothing was ever off track. Deriving
+it from the width means narrowing the road narrows it too, instead of it being a second thing to
+remember.
 
 **Known and NOT yet addressed, because it is tuning and needs a run first:** `speedBoost` is 1.15
 on the traffic prefabs, which is right for traffic to catch and wrong for a fair race, and it is
@@ -2428,6 +2482,41 @@ block, instead of leaving a control that silently does nothing.
 It requests on `#wrap` rather than the canvas so the loading bar and error pane stay inside the
 fullscreen view, and refocuses the canvas afterwards, since clicking the button steals focus and
 keyboard input dies without it.
+
+### ⚠ CAR-ON-CAR DAMAGE WAS SILENTLY DEAD ON HALF THE CARS — found 2026-09-02
+
+Found while answering "should race mode turn obstacle avoidance off". **`CarDamage` gates every
+impact on the OTHER object's layer** (`damagingLayers`, `m_Bits: 1` = Default only), and the car
+prefabs are on **two different layers with no pattern to it**:
+
+| On `Default` (0) | On `Car` (6) |
+| --- | --- |
+| CarE30, CarTruck, TrafficCar, TrafficP72, TrafficTruck | CarP72, CarAventador, TrafficAventador |
+
+So a P72 hitting a TrafficAventador — both on `Car` — did **no damage in either direction**, and
+every other pairing across the two layers damaged exactly one of the two cars. **The PvP scoring
+shipped in Update 2 does not work on the P72 or the Aventador**, which are two of the four player
+cars, and nothing anywhere says so: the cars collide and bounce perfectly, they just never take
+damage or pay out.
+
+Fixed by setting `damagingLayers` to **Default + Car (`m_Bits: 65`)** on all eight prefabs. That
+is the safe half of the fix — it can only enable damage that was already meant to happen.
+
+**The layers themselves are still inconsistent and are NOT fixed.** The documented rule is that
+cars live on `Car` and probes see `Default` only, and today five prefabs break it. That has three
+further consequences, all live right now:
+
+- **Wheel SphereCasts treat a car on `Default` as GROUND** (`CarController.groundMask` = Default),
+  so a car can drive up the side of another one.
+- **`TrafficDriver`'s ground probes read a car ahead as terrain**, so a car on Default reads as a
+  1.5 m rise — which is also why the AI currently avoids some cars and not others.
+- **The hazard sweep sees three traffic prefabs and not the fourth.** Whatever car-avoidance the
+  AI appears to have is arbitrary per prefab.
+
+Normalising every car onto `Car` is the right end state, but it CHANGES DESTRUCTION MODE — traffic
+would stop being avoided by the hazard sweep and would have to rely on `SeparationBias`, which
+does not know about the player's car at all. That is a gameplay call, not a cleanup, so it is
+left for Ethan to decide rather than done quietly.
 
 ### Traffic AI — built 2026-08-30
 

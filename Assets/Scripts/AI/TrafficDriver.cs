@@ -161,12 +161,21 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "lets the existing weights keep their meaning instead of being retuned twice.")]
     public float progressScale = 10f;
 
-    [Tooltip("Penalty per metre the probe lands OUTSIDE the track's own width. Without it the " +
-             "highest-progress answer is always the very inside of the corner, because a " +
-             "polyline is shortest across its own chord — and on The Dam the inside of the " +
-             "corner is the wall. Raise it if they hug the barriers, lower it if they refuse to " +
-             "take a line at all and drive nose-to-tail down the middle.")]
-    public float racingLineWeight = 0.9f;
+    [Tooltip("Penalty for landing OUTSIDE the track's own width, per metre SQUARED.\n\n" +
+             "⚠ IT IS SQUARED, AND THAT IS THE FIX FOR CORNER CUTTING. A linear penalty loses " +
+             "this argument: cutting a corner can gain MORE than the probe's straight-line " +
+             "reach, because a chord across a bend covers more track than driving round it — so " +
+             "the progress term pays about 4 for a cut that a linear penalty charged 3.6 for, " +
+             "and the car took it every time. Squared, being 4 m off the road costs 16 instead " +
+             "of 3.6, so a line within the road is free and leaving it is not.\n\n" +
+             "Raise it if they still clip the inside, lower it if they refuse to take a line at " +
+             "all and drive nose-to-tail down the exact centre.")]
+    public float racingLineWeight = 1f;
+
+    [Tooltip("Fraction of the half-width a probe may stray before it is penalised at all. Below " +
+             "1 the AI is charged a little for using the outer part of the road, which keeps it " +
+             "on a line rather than wandering the full width. At 1 the whole road is free.")]
+    [Range(0.2f, 1f)] public float racingLineSlack = 0.75f;
 
     [Header("Separation")]
     [Tooltip("Cars closer than this push each other apart. 0 disables.")]
@@ -216,6 +225,11 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     [Tooltip("Metres of track this car has covered, laps included. Only moves in race mode. " +
              "Sitting at 0 while the car drives means the follower never acquired the track.")]
     [SerializeField] float raceDistanceReadout;
+
+    [Tooltip("Metres this car is from the centreline. Compare against half the track's Width: " +
+             "a car that reads well over it while driving normally is following a line that is " +
+             "not on the road, which is a WAYPOINT problem, not an AI one.")]
+    [SerializeField] float offLineReadout;
 
     /// <summary>Where this car is round the track, or null on a destruction map.</summary>
     /// <remarks>
@@ -304,6 +318,7 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         {
             Line.Advance(transform.position);
             raceDistanceReadout = Line.Distance;
+            offLineReadout = Line.Offset;
         }
 
         if (Time.time >= nextDecisionAt)
@@ -374,9 +389,25 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
                 candidate.y = there + 0.5f;
 
                 float gained = Line.Gain(candidate, out float offCentre);
-                float wide = Mathf.Max(0f, offCentre - track.width * 0.5f);
 
-                worth = gained / Mathf.Max(1f, reach) * progressScale - wide * racingLineWeight;
+                // THE PENALTY IS UNBOUNDED AND THAT IS DELIBERATE — it has to do two jobs at
+                // once, and a flat "off the track is disqualified" rule does the second one
+                // catastrophically badly.
+                //
+                //   ON the road, it stops corner cutting. Progress alone always prefers the
+                //   inside, because a chord across a bend covers MORE track than driving round
+                //   it — a cut can score above the probe's own reach, which no linear penalty
+                //   was ever going to out-argue.
+                //
+                //   OFF the road, it is the way back. Rejecting every off-track probe outright
+                //   leaves a spun-off car with seven identical scores, and identical scores mean
+                //   the first probe wins — full lock, into the scenery, forever. Growing the
+                //   penalty instead means the LEAST wrong direction still wins, so the car
+                //   always steers back toward the road it can no longer reach directly.
+                float wide = Mathf.Max(0f, offCentre - track.width * 0.5f * racingLineSlack);
+
+                worth = gained / Mathf.Max(1f, reach) * progressScale
+                        - wide * wide * racingLineWeight;
             }
             else
             {

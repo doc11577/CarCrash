@@ -437,7 +437,7 @@ MonoBehaviour:
   detachedLayer: 0
   damagingLayers:
     serializedVersion: 2
-    m_Bits: 1
+    m_Bits: 65
   lastImpulse: 0
   lastDamage: 0
   sustainedScale: 0.6
