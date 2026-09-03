@@ -311,6 +311,46 @@ Sketch of the work: a chunking step in `publish.sh` that cuts any `prod/` file o
 `embed.html` already has the bar and the on-screen error pane, so it is a modest change to a
 file that is already hand-written for this job.
 
+### Save to a `.crash` FILE — built 2026-09-02
+
+Papa's-style: SAVE TO FILE downloads `carcrash-progress.crash`, LOAD FROM FILE picks one and
+applies it. `Game/SaveFile.cs` + `Plugins/WebGL/FileIO.jslib`, two buttons on the Options screen.
+
+**The file is the save CODE in a wrapper — there is no second format.** `SaveCode` already owns
+the encoding, the checksum and the validation, and it has already shipped one format bug (the
+nested delimiter). A second serialiser would be a second thing to get wrong and a second thing to
+keep in step. This only adds a way to MOVE that string.
+
+**Why any of it needs JavaScript, and why that is the whole plugin.** A browser permits a download
+or a file picker only from a real user gesture, and Unity's C# cannot originate one — the click
+has to be made by the page. So exactly two functions live in the `.jslib` and nothing else does.
+
+- **The result comes back through `SendMessage`, not a return value.** Reading a file is
+  asynchronous: the picker returns the instant it opens and `FileReader` fires whenever the player
+  chooses something, which may be never. `SendMessage` addresses a GameObject BY NAME, hence the
+  `CarCrashSaveFileReceiver` object, which exists for no other reason.
+- **The receiver is `DontDestroyOnLoad`.** The menu scene can unload while a file dialog is open,
+  and a `SendMessage` to a destroyed object is a silent no-op — indistinguishable from the player
+  having cancelled.
+- **Both jslib functions swallow their exceptions and log.** An exception crossing back into WASM
+  takes the whole game down, and a save button that fails must not do that.
+- **The object URL is revoked on a 10 s timer, not immediately.** Some browsers begin the write
+  asynchronously, and a revoked URL there produces an empty file.
+- **`accept=".crash,.txt"` is a hint, not a restriction.** Every browser still offers "all files",
+  and a save renamed by a file manager has to stay loadable.
+- Nothing appears on screen between opening the picker and the read completing. A "loading…"
+  message over a dialog the game cannot see would be a guess about what the player is doing.
+
+**No change was needed to `tools/embed.html`.** It renders the canvas directly — there is no
+iframe of ours to carry a `sandbox` attribute — and Google Sites' own embed sandbox already
+includes `allow-downloads`. Worth recording because the opposite was assumed first: a download
+blocked by a missing sandbox token fails *silently*, which would have been the obvious suspect.
+
+**Outside the Web build there is no browser**, so the Editor writes to and reads from
+`Application.persistentDataPath` and logs the path. Enough to test the round trip without a build.
+`SaveFile.Supported` says which world it is in, and the on-screen message says so too rather than
+claiming a download that did not happen.
+
 ### The paint shop — built 2026-09-02
 
 Five free colours and four bought ones, chosen per car in the garage. **No wiring: it is all
@@ -1050,6 +1090,7 @@ stays over it.** Argue new content down on download time and rigidbody count, no
 | `Game/ScoreHud.cs` | Gear counter, combo bar, airtime, MPH speedometer and floating popups. Builds its own canvases in code. |
 | `Game/PlayerWallet.cs` | Persistent gear balance, best run and owned cars, in PlayerPrefs. |
 | `Game/SaveCode.cs` | Progress as a copy-paste text code. Works when browser storage does not. |
+| `Game/SaveFile.cs` | Progress as a downloadable `.crash` file. Wraps SaveCode; needs Plugins/WebGL/FileIO.jslib. |
 | `Game/CarColours.cs` | The paint shop: palette, prices, what is owned, and which car wears which. |
 | `Game/SaveHealth.cs` | Counts launches to prove whether this browser actually persists anything. |
 | `AI/TrafficDriver.cs` | Traffic AI. Steers at the biggest ground drop ahead. See the known limitation. |

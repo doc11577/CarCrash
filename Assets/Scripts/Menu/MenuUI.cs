@@ -559,8 +559,21 @@ public class MenuUI : MonoBehaviour
         UiKit.Button(page.transform, "LOAD", new Vector2(300f, 190f), new Vector2(160f, 50f),
                      LoadSaveCode, fontSize: 24f);
 
+        // A FILE, as well as a code. The code is immune to blocked storage; a file is immune to
+        // blocked storage AND to a mis-paste, which is the failure a 40-character string actually
+        // has on a Chromebook with no clipboard manager. It also survives being emailed to
+        // yourself, which is how a save gets from the school machine to a home one.
+        //
+        // Above the message line so the two rows of controls stay together and the one line of
+        // feedback sits under all of them.
+        UiKit.Button(page.transform, "SAVE TO FILE", new Vector2(-155f, 130f),
+                     new Vector2(300f, 50f), SaveToFile, fontSize: 24f);
+
+        UiKit.Button(page.transform, "LOAD FROM FILE", new Vector2(165f, 130f),
+                     new Vector2(300f, 50f), LoadFromFile, fontSize: 24f);
+
         saveMessage = UiKit.Text(page.transform, "", 22f, UiKit.Muted,
-                                 TextAlignmentOptions.Center, new Vector2(0f, 145f),
+                                 TextAlignmentOptions.Center, new Vector2(0f, 88f),
                                  new Vector2(1100f, 26f));
 
         // ---- dev mode --------------------------------------------------------------------
@@ -769,6 +782,49 @@ public class MenuUI : MonoBehaviour
         RefreshSave();
         RefreshCars();
         RefreshMain();
+    }
+
+    /// <summary>Download the save as a .crash file.</summary>
+    void SaveToFile()
+    {
+        SaveFile.Save();
+
+        if (saveMessage == null) return;
+
+        saveMessage.color = UiKit.Muted;
+        saveMessage.text = SaveFile.Supported
+            ? $"Saved {SaveFile.FileName} to your downloads."
+            : "No browser here — check the Console for where it was written.";
+    }
+
+    /// <summary>
+    /// Pick a .crash file and apply it.
+    /// </summary>
+    /// <remarks>
+    /// The result arrives through a callback rather than a return value: the file picker returns
+    /// the moment it opens, and the read finishes whenever the player chooses something — which
+    /// may be never. Nothing is said on screen until it does, because "loading…" over a dialog
+    /// the game cannot see would be a guess about what the player is doing.
+    /// </remarks>
+    void LoadFromFile()
+    {
+        SaveFile.Load((ok, message) =>
+        {
+            if (saveMessage != null)
+            {
+                saveMessage.color = ok ? UiKit.Muted : UiKit.Accent;
+                saveMessage.text = message;
+            }
+
+            if (!ok) return;
+
+            // Same repaint the pasted-code path does. A load changes the wallet, ownership and
+            // now paint, while every page already exists — so nothing refreshes itself.
+            carIndex = 0;
+            RefreshSave();
+            RefreshCars();
+            RefreshMain();
+        });
     }
 
     /// <summary>First press arms, second press erases. See BuildOptions for why.</summary>
