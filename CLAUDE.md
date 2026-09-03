@@ -687,11 +687,16 @@ typed values and remembers them per car.
 
 **Two things, in this order.**
 
-**1. RACE MODE is the new direction — see the RACE MODE section for the full brief.** The game is
-shifting from a destruction game to an arcade racer, with destruction kept as one of two modes.
-Nothing is built. The brief, the decisions already made, and a suggested build order are written
-up; start there rather than from scratch. **Its first step is a PERF MEASUREMENT, not code** —
-8 cars is double what has ever been measured on the Chromebook.
+**1. LAY A TRACK ON THE DAM, THEN TAKE THE PERF MEASUREMENT.** Race mode's steps 1 and 3 are
+built — `Track/RaceTrack.cs`, its scene-view editor, and `TrafficDriver` racing a line instead of
+seeking the descent. **Nothing has been run.** The blocking item is the same one it always was:
+**8 cars is double what has ever been measured on the Chromebook**, and the mode should not be
+built around eight until that number exists. Wiring steps are in the RACE MODE section; the short
+version is add a `RaceTrack`, click along the road, set `TrafficSpawner.raceTrack` and `count 7`,
+and read `FPS` / `worst` / `N AI cars` off the dev readout on the school device.
+
+Steps 4-7 — the director, race scoring, the mode-select menu, undetachable wheels — are unstarted
+and are what comes after that number.
 
 **2. SPLIT THE BUILD FILES.** Still not done, still the thing that retires the per-file cap.
 `publish.sh` cuts any `prod/` file over ~18 MB into `name.partN`; `tools/embed.html` fetches and
@@ -970,18 +975,136 @@ logic.** If it will not hold, the answer is fewer AI or cheaper AI, and that is 
 before the mode is built around eight. Turn `FallingBoulders` OFF on race maps regardless — 16
 boulders plus 8 cars is far past the 40-rigidbody budget.
 
-### Suggested build order
+### Build order — steps 1 and 3 are BUILT, 2026-09-02
 
-1. **`Track/RaceTrack.cs`** — waypoints from child transforms, progress-along-lap maths, nearest
-   point for respawn, gizmos, validation. Everything else depends on it.
-2. **Perf check** — 8 cars on The Dam, read the readout. See above.
-3. **AI follows the track** — swap the `drop` term in `Decide()` for track progress; delete
-   nothing else.
+1. ~~**`Track/RaceTrack.cs`**~~ — **BUILT.** See the section below.
+2. **Perf check** — 8 cars on The Dam, read the readout. **NOT DONE — this is the next thing,
+   and it needs the school Chromebook.** `PerfReadout` now prints `N AI cars` alongside
+   `N boulders live` so the measurement says on screen what it was taken with.
+3. ~~**AI follows the track**~~ — **BUILT.** One term swapped in `TrafficDriver.Decide()`,
+   exactly as planned; nothing was deleted. See below.
 4. **`Game/RaceDirector.cs`** — laps, positions, finish order, R-to-checkpoint respawn.
 5. **Race scoring** — placement, speed, airtime, near miss, PvP, via `RunScore.Award()`.
-6. **Menu** — mode select, then map select. `GameSelection` gains a mode id.
+6. **Menu** — mode select, then map select. `GameSelection` **already has** the mode id.
 7. **Wheels made undetachable in race mode.**
 8. Later: boost pads, nitro.
+
+**Nothing in 1 or 3 has been run.** Both compile clean against the Unity assemblies; neither has
+been in play mode, and there is no track laid out on any map yet. Treat every number in them as
+a starting guess.
+
+### The racing line — `Track/RaceTrack.cs`, built 2026-09-02
+
+Ordered child transforms, a distance table, and one class that answers "how far round is this
+car". Everything else in race mode reads position from it.
+
+- **⚠ NOTHING USES "NEAREST WAYPOINT" AS A POSITION, and that is the whole design.** The obvious
+  implementation is wrong on any track that passes near itself — the dam road doubling back, a
+  hairpin, a bridge over its own approach. One frame the nearest point is 40 m ahead, the next it
+  is 900 m behind, and the standings flicker between first and last.
+
+  Every racer instead carries a **`RaceTrack.Follower`**, which only ever looks at segments within
+  `searchWindow` (6) of the one it was on last. That single restriction buys three things at once:
+  correct behaviour at a crossover, **lap counting for free**, and cheap anti-cheat — a car cannot
+  gain half a lap by cutting the infield, because the follower will not accept a segment it could
+  not have reached.
+
+- **The lap IS the wrap.** The window search runs on an UNWRAPPED index, so crossing the start
+  line shows up as index `n` rather than as a jump back to zero that would have to be inferred.
+  No trigger volumes, nothing to miss at speed. `Distance = Lap x Length + distance along lap`,
+  which is the position number the brief called for.
+
+- **A tie keeps the segment the car is already on** (`>=`, not `>`). A car sitting exactly on a
+  waypoint is equidistant from both segments meeting there, and flipping between them every frame
+  makes the distance readout jitter across every waypoint boundary.
+
+- **`RespawnPose` takes a DISTANCE, not a position.** The caller already has a follower and the
+  follower's answer is the trustworthy one. Handing it a world position reintroduces the
+  nearest-waypoint ambiguity at exactly the worst moment: a car that has just fallen off the dam
+  is, in a straight line, very close to both the road it fell from and the road below it.
+
+- **The validator exists because a waypoint chain fails SILENTLY and looks like an AI bug.** A
+  duplicate makes a zero-length segment; two points out of order make cars drive at a wall and
+  turn round; a point floating over the road makes them aim at the sky. It checks spacing both
+  ways, corner angle, and raycasts every point for ground — and it runs at `Start` as well as from
+  the button, because there is no console on a Chromebook to go looking in later.
+
+- **The gizmo draws the corridor width and a direction chevron, not just a line.** A centreline
+  through a gap the car cannot fit through looks perfect as a line, and a lap laid out the wrong
+  way round looks perfect too.
+
+#### `Editor/RaceTrackEditor.cs` — click along the road
+
+The honest cost of "hand-placed empties are tedious once and visual forever" is creating, naming,
+ordering and grounding 25 GameObjects. This pays it off: **Start placing waypoints**, then click
+along the road in driving order.
+
+- **Surfaces are found with `HandleUtility.RaySnap`, not `Physics.Raycast`.** It picks against
+  the rendered mesh, so it works on scenery whose collider is missing, coarser than the mesh, or
+  still importing — all three of which are true of a downloaded map while its racing line is being
+  drawn. `Physics.Raycast` is the fallback.
+- **`placing` is static.** It has to survive the inspector being rebuilt, which happens on every
+  selection change — including the one caused by creating a waypoint. A per-instance flag switches
+  itself off after the first click.
+- **Place mode takes the default control** (`HandleUtility.AddDefaultControl`), or a click in
+  empty space clears the selection, deselects the track and ends place mode immediately.
+- **Alt/Ctrl/Shift clicks are deliberately not taken.** Alt is orbit, and stealing it makes the
+  scene view unnavigable at exactly the moment you need to move around.
+- **New points sit 0.5 m above the surface, not on it.** A point exactly on the ground reads as
+  underground to the validator on any slope, because its check-ray lands a few centimetres away on
+  a face that has moved.
+- **Drop all to ground** is the repair for the commonest mistake there is: dragging a waypoint in
+  the scene view moves it along the VIEW PLANE, so it ends up hanging over the road it used to sit
+  on. Invisible from most angles, and it puts a respawned car in the sky.
+- **Reverse direction** keeps waypoint 0 where it is and reverses everything after it, so turning
+  a lap round does not also move the start/finish line to the other side of the track.
+
+### Racing the line — `TrafficDriver`, 2026-09-02
+
+**One term changed, and nothing was deleted.** `Decide()` scored each probe as
+`drop − hazard × hazardWeight − |angle| × bias`. With a `RaceTrack` set, `drop` becomes track
+progress and the other two terms are untouched — so the hazard sweep, `InterpolatedAngle`, the
+separation bias, the sideslip catch and the speed-scaled lookahead all apply to a race unaltered.
+A destruction map sets no track and behaves exactly as before.
+
+- **Progress is NORMALISED before it is used**, `gain / reach * progressScale`. The two rules
+  produce numbers of very different size: a good descent is a few metres, a good race probe is
+  nearly the whole lookahead — 50 m at speed. Every other weight in the component was tuned
+  against the small one, so scaling progress back into that range is what lets `hazardWeight` and
+  `straightBias` keep their meaning instead of being retuned twice.
+- **`racingLineWeight` is not polish.** The highest-progress answer is always the very inside of
+  the corner, because a polyline is shortest across its own chord — and on The Dam the inside of
+  the corner is the wall. The penalty applies only OUTSIDE the track's own width, so a car is free
+  to take a line within the road and pays only for leaving it.
+- **The probe is scored against the GROUND at the probe, not the flat point it was aimed at.** On
+  a climb or descent the flat point hangs metres off the road, so every direction would read as
+  off the track — worst exactly where the track is most interesting. The ground height was already
+  measured for the hazard sweep, so this costs nothing.
+- **The 12-ray downhill scan is REPLACED, not merely skipped.** In race mode "forward" comes from
+  the track. Those rays do not just become unnecessary, they answer the wrong question: on a flat
+  dam road the steepest descent is a drainage camber, and a car treating that as the way out would
+  decide it was facing the wrong way on a straight. Everything after that — the wrong-way timer,
+  the committed turnaround, the stuck recovery — is shared and unchanged.
+- **Arrival can never fire in race mode.** `downhillDrop` is pinned high. A car that parked itself
+  on the last lap would be indistinguishable from one that had crashed.
+- **The follower advances every frame, the fan still decides at 14 Hz.** 14 Hz is fine for
+  steering and visibly steppy on a position readout.
+- **`TrafficDriver.Line` is public so the director can read the standings without giving each car
+  a SECOND follower.** Two followers on one car is not merely wasteful — they update at different
+  moments, so they disagree across a lap boundary and a car appears to gain and lose a lap in
+  consecutive frames.
+
+**The grid is laid out ON the track when `TrafficSpawner.raceTrack` is set**, measured backwards
+along the racing line from the start, and the `grid` transform is ignored. A hand-placed grid is
+only correct if its blue arrow agrees with the track to within a couple of degrees and nothing
+checks that: eight cars start slightly sideways, all correct their line in the first second, and
+the field is scattered before the flag drops. `GridSlot` is one function for the spawn and the
+gizmo, so what is drawn is what happens.
+
+**Known and NOT yet addressed, because it is tuning and needs a run first:** `speedBoost` is 1.15
+on the traffic prefabs, which is right for traffic to catch and wrong for a fair race, and it is
+applied in `Awake` so the spawner cannot change it after `Instantiate`. And `TrafficTruck` in the
+mix is a 24 m/s car in a 32 m/s field — leave it out of `carPrefabs` on a race map.
 
 ## Roadmap
 
@@ -1278,13 +1401,15 @@ stays over it.** Argue new content down on download time and rigidbody count, no
 | `Game/RunScore.cs` | Damage, lost parts and airtime → gears. Combo multiplier. Feats. Banks the run on scene unload. |
 | `Track/FallingBoulders.cs` | Boulders down the valley sides. Generated meshes, own pool, spawned ahead of the player. |
 | `Track/DartboardScore.cs` | Scores where the car lands on Bullseye. Archery rings, 10 in the gold down to 1. |
+| `Track/RaceTrack.cs` | The racing line as ordered child transforms. Answers "how far round is this car". |
+| `Editor/RaceTrackEditor.cs` | Click along the road to lay a track out. Drop-to-ground, renumber, reverse, validate. |
 | `Game/ScoreHud.cs` | Gear counter, combo bar, airtime, MPH speedometer and floating popups. Builds its own canvases in code. |
 | `Game/PlayerWallet.cs` | Persistent gear balance, best run and owned cars, in PlayerPrefs. |
 | `Game/SaveCode.cs` | Progress as a copy-paste text code. Works when browser storage does not. |
 | `Game/SaveFile.cs` | Progress as a downloadable `.crash` file. Wraps SaveCode; needs Plugins/WebGL/FileIO.jslib. |
 | `Game/CarColours.cs` | The paint shop: palette, prices, what is owned, and which car wears which. |
 | `Game/SaveHealth.cs` | Counts launches to prove whether this browser actually persists anything. |
-| `AI/TrafficDriver.cs` | Traffic AI. Steers at the biggest ground drop ahead. See the known limitation. |
+| `AI/TrafficDriver.cs` | Traffic AI. Steers at the biggest ground drop ahead, or at the most TRACK gained when given a RaceTrack. |
 | `AI/TrafficSpawner.cs` | Spawns the traffic grid, paints it, optionally registers it for scoring. |
 | `Vehicle/ICarDriver.cs` | Throttle / steer / handbrake. Implemented by `CarInput` and `TrafficDriver`. |
 | `Vehicle/CarPaint.cs` | Tints the body submesh via a MaterialPropertyBlock. |

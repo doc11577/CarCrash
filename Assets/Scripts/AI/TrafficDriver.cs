@@ -36,6 +36,17 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     /// <summary>Every live traffic car, for separation without a physics query.</summary>
     static readonly List<TrafficDriver> Live = new List<TrafficDriver>();
 
+    /// <summary>
+    /// AI cars alive right now. Published for the perf readout, not for gameplay.
+    /// </summary>
+    /// <remarks>
+    /// Every one of these is a rigidbody doing four SphereCasts a physics step plus about four
+    /// of its own, and rigidbody count is named in the project's budget as the first thing that
+    /// will blow the frame time. There is no Inspector on a Chromebook, so the only way to know
+    /// whether a measurement was taken with the field intact is to put the number on screen.
+    /// </remarks>
+    public static int LiveCount => Live.Count;
+
     [Header("Looking ahead")]
     [Tooltip("How far ahead the probes sample when stopped, in metres. Too short and it cannot " +
              "see a wall in time; too long and it ignores what is directly in front of it.")]
@@ -132,6 +143,31 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "mid-crash from triggering one.")]
     public float wrongWayTime = 1.2f;
 
+    [Header("Racing")]
+    [Tooltip("Read-only here — set by whatever puts the car on the grid, and left empty on a " +
+             "destruction map. When a track is present the steering rule changes from 'go where " +
+             "the ground drops most' to 'go where the most TRACK is gained', and nothing else " +
+             "about the driver changes: the hazard sweep, the interpolated angle, the separation " +
+             "bias, the slide catch and the speed-scaled lookahead all apply to a race unaltered.")]
+    public RaceTrack track;
+
+    [Tooltip("How much a metre of track gained is worth, against a metre of descent on a " +
+             "destruction map.\n\n" +
+             "The two rules produce numbers of very different size — a good descent is a few " +
+             "metres, a good probe on a race line is nearly the whole lookahead, so 50 — and " +
+             "every other weight in this component (hazardWeight, straightBias) was tuned " +
+             "against the small one. Progress is therefore normalised by the lookahead first, " +
+             "giving roughly 0-1, and scaled back up to the range a drop occupies. That is what " +
+             "lets the existing weights keep their meaning instead of being retuned twice.")]
+    public float progressScale = 10f;
+
+    [Tooltip("Penalty per metre the probe lands OUTSIDE the track's own width. Without it the " +
+             "highest-progress answer is always the very inside of the corner, because a " +
+             "polyline is shortest across its own chord — and on The Dam the inside of the " +
+             "corner is the wall. Raise it if they hug the barriers, lower it if they refuse to " +
+             "take a line at all and drive nose-to-tail down the middle.")]
+    public float racingLineWeight = 0.9f;
+
     [Header("Separation")]
     [Tooltip("Cars closer than this push each other apart. 0 disables.")]
     public float separationRadius = 10f;
@@ -177,6 +213,22 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
              "baseline looks like, and it looked like nothing else.")]
     [SerializeField] float hazardReadout;
 
+    [Tooltip("Metres of track this car has covered, laps included. Only moves in race mode. " +
+             "Sitting at 0 while the car drives means the follower never acquired the track.")]
+    [SerializeField] float raceDistanceReadout;
+
+    /// <summary>Where this car is round the track, or null on a destruction map.</summary>
+    /// <remarks>
+    /// Public so a race director can read the standings without giving every car a SECOND
+    /// follower. Two followers on one car is not merely wasteful: they update at different
+    /// moments, so they disagree across a lap boundary and the car appears to gain and lose a
+    /// lap in consecutive frames.
+    /// </remarks>
+    public RaceTrack.Follower Line { get; private set; }
+
+    /// <summary>True while this car is racing a track rather than seeking the descent.</summary>
+    public bool Racing => track != null && Line != null;
+
     CarController car;
     Rigidbody body;
 
@@ -220,9 +272,39 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     void OnEnable() => Live.Add(this);
     void OnDisable() => Live.Remove(this);
 
+    void Start()
+    {
+        // Start, not Awake: RaceTrack builds its distance table in ITS Awake, and component
+        // order across GameObjects is undefined. Acquiring here means the table exists.
+        if (track != null) Line = track.Follow(transform.position);
+    }
+
+    /// <summary>Put this car on a track and switch it from descent-seeking to racing.</summary>
+    /// <remarks>
+    /// Called by whatever spawns the grid. Safe before or after Start — if the track is handed
+    /// over early, Start acquires the follower; if late, this does.
+    /// </remarks>
+    public void Race(RaceTrack onTrack)
+    {
+        track = onTrack;
+        Line = onTrack != null ? onTrack.Follow(transform.position) : null;
+
+        // A race has no bottom of the hill to arrive at. The finish is the director's business,
+        // and a car that parked itself three laps early would look exactly like a crash.
+        arrived = false;
+    }
+
     void Update()
     {
         if (Time.timeScale <= 0f) return;
+
+        // Every frame, not at the decision rate. The follower is what the standings are read
+        // from, and 14 Hz is enough for steering but visibly steppy on a position readout.
+        if (Line != null)
+        {
+            Line.Advance(transform.position);
+            raceDistanceReadout = Line.Distance;
+        }
 
         if (Time.time >= nextDecisionAt)
         {
@@ -267,20 +349,48 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         {
             float angle = ProbeAngle(i);
             Vector3 dir = Quaternion.AngleAxis(angle, Vector3.up) * forward;
-            float there = GroundHeight(transform.position + dir * reach, 25f);
+            Vector3 candidate = transform.position + dir * reach;
+            float there = GroundHeight(candidate, 25f);
 
             // No ground found at all: a hole, or beyond the mesh. Treated as the worst option
-            // rather than the best, or cars would dive off the outside of the map.
-            float drop = float.IsNegativeInfinity(there) ? -1000f : here - there;
+            // rather than the best, or cars would dive off the outside of the map. Applies to
+            // both rules — a race line that leaves the map is not a shortcut.
+            float worth;
+            if (float.IsNegativeInfinity(there))
+            {
+                worth = -1000f;
+            }
+            else if (Racing)
+            {
+                // THE ONE LINE THAT MAKES THIS A RACE. Descent is replaced by progress along
+                // the track; every other term below is the destruction AI's, unchanged.
+                //
+                // Measured against the GROUND at the probe, not against the flat point the
+                // probe was aimed at. On a climb or a descent the flat point hangs several
+                // metres off the road, and since the offset from the centreline is what keeps
+                // cars on the racing line, that would read as every direction being off the
+                // track — worst exactly where the track is most interesting. `there` is the
+                // ground height already measured above, so this costs nothing.
+                candidate.y = there + 0.5f;
+
+                float gained = Line.Gain(candidate, out float offCentre);
+                float wide = Mathf.Max(0f, offCentre - track.width * 0.5f);
+
+                worth = gained / Mathf.Max(1f, reach) * progressScale - wide * racingLineWeight;
+            }
+            else
+            {
+                worth = here - there;
+            }
 
             float blocked = Hazard(dir, here, there, reach);
-            scores[i] = drop - blocked * hazardWeight
-                             - Mathf.Abs(angle) * bias;
+            scores[i] = worth - blocked * hazardWeight
+                              - Mathf.Abs(angle) * bias;
 
             if (scores[i] <= bestScore) continue;
             bestScore = scores[i];
             bestHazard = blocked;
-            bestDrop = drop;
+            bestDrop = worth;
             best = i;
         }
 
@@ -404,29 +514,50 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     /// </remarks>
     void ScanForDownhill()
     {
-        const int rays = 12;
-        float here = GroundHeight(transform.position, 6f);
-        float reach = lookAhead * 1.4f;
-
-        float bestDrop = float.NegativeInfinity;
-        Vector3 bestDir = Flat(transform.forward);
-
-        for (int i = 0; i < rays; i++)
+        if (Racing)
         {
-            float angle = i * (360f / rays);
-            Vector3 dir = Quaternion.AngleAxis(angle, Vector3.up) * Vector3.forward;
-            float there = GroundHeight(transform.position + dir * reach, 25f);
-            if (float.IsNegativeInfinity(there)) continue;
+            // A race already knows which way is forward, so the twelve rays are not merely
+            // unnecessary here — they answer the wrong question. On a flat dam road the
+            // steepest descent is a drainage camber, and a car that treated that as "the way
+            // out" would decide it was facing the wrong way on a straight.
+            //
+            // Everything after this block is identical for both modes: the same wrong-way
+            // timer, the same commitment to a turnaround, the same recovery. Only the source
+            // of "forward" changes.
+            Vector3 ahead = Line.Aim(Mathf.Max(10f, lookAhead * 0.6f)) - transform.position;
+            downhill = ahead.sqrMagnitude < 1e-4f ? Flat(transform.forward) : Flat(ahead);
 
-            float drop = here - there;
-            if (drop <= bestDrop) continue;
-
-            bestDrop = drop;
-            bestDir = dir;
+            // Above arrivedDrop by a wide margin, so the arrival test can never fire. A race
+            // finishes when the director says so, and a car that parked itself on the last lap
+            // would be indistinguishable from one that had crashed.
+            downhillDrop = 1000f;
         }
+        else
+        {
+            const int rays = 12;
+            float here = GroundHeight(transform.position, 6f);
+            float reach = lookAhead * 1.4f;
 
-        downhill = bestDir;
-        downhillDrop = float.IsNegativeInfinity(bestDrop) ? 0f : bestDrop;
+            float bestDrop = float.NegativeInfinity;
+            Vector3 bestDir = Flat(transform.forward);
+
+            for (int i = 0; i < rays; i++)
+            {
+                float angle = i * (360f / rays);
+                Vector3 dir = Quaternion.AngleAxis(angle, Vector3.up) * Vector3.forward;
+                float there = GroundHeight(transform.position + dir * reach, 25f);
+                if (float.IsNegativeInfinity(there)) continue;
+
+                float drop = here - there;
+                if (drop <= bestDrop) continue;
+
+                bestDrop = drop;
+                bestDir = dir;
+            }
+
+            downhill = bestDir;
+            downhillDrop = float.IsNegativeInfinity(bestDrop) ? 0f : bestDrop;
+        }
 
         // Arrival is decided HERE, not from the forward fan. "No descent ahead of me" is also
         // true of a car facing a wall; "no descent in any direction" is what being at the

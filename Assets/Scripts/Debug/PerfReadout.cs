@@ -50,6 +50,12 @@ public class PerfReadout : MonoBehaviour
         int boulders = FallingBoulders.Live;
         if (boulders > 0) readout += $"\n{boulders} boulders live";
 
+        // The AI field, for the same reason. A race is measured with eight cars or it is not a
+        // measurement of a race — and a car that has fallen out of the world takes its cost with
+        // it, which would otherwise look like the frame budget being comfortable.
+        int ai = TrafficDriver.LiveCount;
+        if (ai > 0) readout += $"\n{ai} AI cars";
+
         if (car != null)
             readout += $"\n{car.Speed * 3.6f:F0} km/h   {(car.Grounded ? "grounded" : "airborne")}";
 

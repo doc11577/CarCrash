@@ -39,9 +39,21 @@ public class TrafficSpawner : MonoBehaviour
              "a rigidbody plus four sphere casts a physics step.")]
     [Range(0, 12)] public int count = 3;
 
+    [Header("Racing")]
+    [Tooltip("Set this to the map's RaceTrack to make the field RACE rather than seek the " +
+             "descent. Leave empty on a destruction map.\n\n" +
+             "With a track set, the grid is laid out ON the track behind the start line and " +
+             "aimed along it, so the Grid transform below is ignored — a hand-placed grid that " +
+             "disagrees with the racing line by a few degrees is eight cars starting sideways.")]
+    public RaceTrack raceTrack;
+
+    [Tooltip("Metres behind the start/finish line the FRONT row sits, when racing.")]
+    public float gridSetback = 18f;
+
     [Header("Grid")]
     [Tooltip("Where the grid is laid out. Leave empty to use this GameObject's transform. " +
-             "Put it in the start bay, behind and beside where the player spawns.")]
+             "Put it in the start bay, behind and beside where the player spawns.\n\n" +
+             "IGNORED when Race Track is set — the track lays the grid out itself.")]
     public Transform grid;
 
     [Tooltip("Metres between cars across the grid.")]
@@ -138,18 +150,10 @@ public class TrafficSpawner : MonoBehaviour
 
     void Spawn(Transform origin, int index)
     {
-        int row = index / perRow;
-        int slot = index % perRow;
-
-        // Centre each row on the grid line rather than growing off to one side.
-        float across = (slot - (perRow - 1) * 0.5f) * lateralSpacing;
-        Vector3 position = origin.position
-                           + origin.right * across
-                           - origin.forward * (row * rowSpacing)
-                           + Vector3.up * dropHeight;
+        GridSlot(origin, index, out Vector3 position, out Quaternion rotation);
 
         GameObject prefab = usable[mix.Next(usable.Count)];
-        GameObject car = Instantiate(prefab, position, origin.rotation);
+        GameObject car = Instantiate(prefab, position, rotation);
         car.name = $"Traffic{index:00}_{prefab.name}";
 
         CarPaint paint = car.GetComponent<CarPaint>();
@@ -160,7 +164,15 @@ public class TrafficSpawner : MonoBehaviour
         // The same traffic prefab is used on every course, and Everest wants it off while Quarry
         // very much wants it on.
         TrafficDriver driver = car.GetComponent<TrafficDriver>();
-        if (driver != null) driver.hazardWeight *= obstacleAvoidance;
+        if (driver != null)
+        {
+            driver.hazardWeight *= obstacleAvoidance;
+
+            // Handed over rather than wired on the prefab, for the same reason obstacle
+            // avoidance is: the same traffic prefabs are used on every map, and only the scene
+            // knows whether this one is being raced.
+            if (raceTrack != null) driver.Race(raceTrack);
+        }
 
         if (!scoreTrafficDamage) return;
 
@@ -168,24 +180,59 @@ public class TrafficSpawner : MonoBehaviour
         if (damage != null && RunScore.Instance != null) RunScore.Instance.Register(damage);
     }
 
+    /// <summary>Where car <paramref name="index"/> starts, and which way it faces.</summary>
+    /// <remarks>
+    /// One function for the spawn and the gizmo, so what is drawn in the scene view is what
+    /// actually happens. Two copies of a layout is how a grid ends up looking right and
+    /// spawning wrong — this project has already paid for that lesson with the car roster.
+    ///
+    /// ON A TRACK the grid is measured back along the RACING LINE rather than laid out on a
+    /// transform's axes. A hand-placed grid transform is only correct if its blue arrow agrees
+    /// with the track to within a couple of degrees, and nothing checks that: eight cars start
+    /// slightly sideways, all of them correct their line in the first second, and the field is
+    /// scattered before the flag drops.
+    /// </remarks>
+    void GridSlot(Transform origin, int index, out Vector3 position, out Quaternion rotation)
+    {
+        int row = index / perRow;
+        int slot = index % perRow;
+
+        // Centre each row on the grid line rather than growing off to one side.
+        float across = (slot - (perRow - 1) * 0.5f) * lateralSpacing;
+
+        if (raceTrack != null && raceTrack.Count >= 2)
+        {
+            // Measured backwards from the start line along the lap, so a row is a row of TRACK
+            // and stays on the road through a corner instead of running off into the scenery.
+            float back = -(gridSetback + row * rowSpacing);
+            Vector3 centre = raceTrack.PointAtDistance(back);
+            Vector3 forward = raceTrack.ForwardAtDistance(back);
+            Vector3 right = Vector3.Cross(Vector3.up, forward).normalized;
+
+            position = centre + right * across + Vector3.up * dropHeight;
+            rotation = Quaternion.LookRotation(forward, Vector3.up);
+            return;
+        }
+
+        position = origin.position
+                   + origin.right * across
+                   - origin.forward * (row * rowSpacing)
+                   + Vector3.up * dropHeight;
+        rotation = origin.rotation;
+    }
+
     void OnDrawGizmosSelected()
     {
         Transform origin = grid != null ? grid : transform;
+        if (raceTrack != null) raceTrack.Rebuild();
 
         Gizmos.color = new Color(1f, 0.78f, 0.15f, 0.9f);
         for (int i = 0; i < count; i++)
         {
-            int row = i / perRow;
-            int slot = i % perRow;
-            float across = (slot - (perRow - 1) * 0.5f) * lateralSpacing;
-
-            Vector3 at = origin.position
-                         + origin.right * across
-                         - origin.forward * (row * rowSpacing)
-                         + Vector3.up * dropHeight;
+            GridSlot(origin, i, out Vector3 at, out Quaternion facing);
 
             Gizmos.DrawWireCube(at + Vector3.up * 0.6f, new Vector3(1.7f, 1.2f, 4.2f));
-            Gizmos.DrawLine(at, at + origin.forward * 3f);
+            Gizmos.DrawLine(at, at + facing * Vector3.forward * 3f);
         }
     }
 }
