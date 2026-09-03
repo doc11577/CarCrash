@@ -58,16 +58,26 @@ public class MenuUI : MonoBehaviour
     /// Keep it short. There is room for about eight lines between the gears line and the tagline
     /// before it collides with them, and nothing here measures that for you.
     /// </remarks>
-    const string PatchTitle = "UPDATE 2";
+    const string PatchTitle = "UPDATE 3";
 
+    /// <remarks>
+    /// SHORT LINES. Each is a thing that changed, named — not explained. Nobody reads a paragraph
+    /// on a title screen, and the panel is sized for about ten of these before it collides with
+    /// the tagline. Nothing measures that for you.
+    ///
+    /// ASCII plus · and — only. The shipped font is a 250-glyph trim and anything else renders as
+    /// a blank box with no error.
+    /// </remarks>
     const string PatchNotes =
-        "·  New map — Bullseye\n" +
-        "·  New map — The Dam, a canyon run\n" +
-        "·  New car — Lamborghini Aventador\n" +
-        "·  Falling boulders down the sides of Quarry\n" +
-        "·  Airtime — Earn gears for airtime\n" +
-        "·  Quality of Life Updates\n" +
-        "·  New garage, a speedometer, and save codes";
+        "·  New game mode — Race\n" +
+        "·  Race The Dam — 3 laps, 8 cars\n" +
+        "·  Drifting — earn gears for going sideways\n" +
+        "·  Tyre marks when you slide or launch\n" +
+        "·  Arcade handling — harder to roll or spin\n" +
+        "·  More air control\n" +
+        "·  R now respawns you in a race\n" +
+        "·  Random grid position every race\n" +
+        "·  Fixed car-on-car damage on two cars";
 
     [Header("Content")]
     public string title = "CAR CRASH";
@@ -208,18 +218,62 @@ public class MenuUI : MonoBehaviour
         // Patch notes sit on the screen rather than behind a button. Nobody clicks a
         // "what's new" link, and the whole point is that a returning player sees what changed
         // without going looking for it.
-        UiKit.Text(page.transform, PatchTitle, 26f, UiKit.Accent,
-                   TextAlignmentOptions.Center, new Vector2(0f, -125f), new Vector2(900f, 32f))
-             .fontStyle = FontStyles.Bold;
-
-        UiKit.Text(page.transform, PatchNotes, 20f, UiKit.Muted,
-                   TextAlignmentOptions.Top, new Vector2(0f, -250f), new Vector2(1000f, 200f));
+        //
+        // MOVED TO THE LEFT AND GIVEN A PANEL. Centred under the buttons they were competing
+        // with the title for the middle of the screen and were capped at about eight lines
+        // before running into the tagline. Off to one side there is room for a real list, and
+        // the centre column stays what it should be: the name of the game and the way into it.
+        BuildPatchPanel(page.transform);
 
         UiKit.Text(page.transform, "Drive downhill. Destroy the car. Earn gears.",
                    26f, UiKit.Muted, TextAlignmentOptions.Center,
                    new Vector2(0f, -395f), new Vector2(1100f, 40f));
 
         return page;
+    }
+
+    /// <summary>The what's-new panel, down the left of the title screen.</summary>
+    /// <remarks>
+    /// A translucent slab rather than bare text on the backdrop. The animated garage backdrop
+    /// runs behind every menu page and its lattice moves under the pointer, so small muted text
+    /// laid straight over it is legible in a screenshot and hard work in motion. The slab is what
+    /// makes the list readable without turning the backdrop off.
+    ///
+    /// Anchored to the LEFT EDGE, not to the centre. At the reference 1920 wide these are the
+    /// same thing; on a narrow Google Sites iframe they are not, and a centre-anchored panel
+    /// slides inward over the buttons as the view narrows.
+    /// </remarks>
+    void BuildPatchPanel(Transform parent)
+    {
+        GameObject panel = new GameObject("PatchNotes", typeof(RectTransform));
+        panel.transform.SetParent(parent, false);
+
+        RectTransform rect = (RectTransform)panel.transform;
+        rect.anchorMin = new Vector2(0f, 0.5f);
+        rect.anchorMax = new Vector2(0f, 0.5f);
+        rect.pivot = new Vector2(0f, 0.5f);
+        rect.anchoredPosition = new Vector2(60f, -60f);
+        rect.sizeDelta = new Vector2(560f, 470f);
+
+        UnityEngine.UI.Image slab = panel.AddComponent<UnityEngine.UI.Image>();
+        slab.color = new Color(UiKit.Slab.r, UiKit.Slab.g, UiKit.Slab.b, 0.82f);
+
+        // Nothing in here is clickable, and a raycast target over a third of the screen would
+        // swallow pointer events the backdrop wants for its glow and shockwaves.
+        slab.raycastTarget = false;
+
+        // ⚠ UiKit.Text ANCHORS TO THE PARENT'S CENTRE with a centred pivot, so these offsets are
+        // measured from the middle of the 560 x 470 panel and NOT from its top-left corner.
+        // Written down because the natural reading of "24, -26" is a 24-pixel inset from the
+        // corner, and that puts both lines in the middle of the slab overlapping each other.
+        UiKit.Text(panel.transform, PatchTitle, 30f, UiKit.Accent,
+                   TextAlignmentOptions.TopLeft,
+                   new Vector2(0f, 190f), new Vector2(500f, 40f))
+             .fontStyle = FontStyles.Bold;
+
+        UiKit.Text(panel.transform, PatchNotes, 22f, UiKit.Ink,
+                   TextAlignmentOptions.TopLeft,
+                   new Vector2(0f, -30f), new Vector2(500f, 360f));
     }
 
     /// <summary>Pick a mode, then a map. The mode is the new first decision of a run.</summary>
@@ -551,7 +605,12 @@ public class MenuUI : MonoBehaviour
             // A tick for the paint in use, a padlock for one not bought, and the highlighted
             // one gets brackets — three states told apart without colour, which matters on a
             // grid where colour is the content.
-            string mark = !p.Owned ? "●" : p.id == worn ? "✓" : "";
+            // ⚠ ASCII ONLY. The shipped font is a 250-glyph trim — ASCII plus U+00B7 and U+2014
+            // and nothing else — so the black circle and check mark this used to draw were
+            // BLANK BOXES in the build. Nothing errors; the swatch just silently loses its
+            // marker. Any new UI character has to be in that set or the set has to be
+            // regenerated, and the set is the cheaper half of that choice.
+            string mark = !p.Owned ? "$" : p.id == worn ? "*" : "";
             if (i == paintIndex) mark = mark.Length > 0 ? "[" + mark + "]" : "[  ]";
 
             swatchTicks[i].text = mark;

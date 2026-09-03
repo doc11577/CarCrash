@@ -554,6 +554,10 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
         float usable = Mathf.Max(0f, half - laneMargin);
         float here = GroundHeight(transform.position, 6f);
 
+        // Before the lane loop: where the other cars are does not change with the lane being
+        // considered, so it is worked out once rather than once per candidate.
+        ScanRivals();
+
         int count = Mathf.Max(3, lanes);
         float best = float.NegativeInfinity;
         float bestLane = 0f;
@@ -631,35 +635,68 @@ public class TrafficDriver : MonoBehaviour, ICarDriver
     /// Cars BEHIND are ignored. Blocking a faster car is racecraft this game does not need, and
     /// a car that swerves for something already past it is just unstable.
     /// </remarks>
-    float Occupancy(float candidate)
+    /// <summary>
+    /// Projects every other racer onto the track ONCE, ready for the lane scan.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ONCE PER DECISION, NOT ONCE PER LANE. Where a rival is on the track does not depend on
+    /// which lane is being considered, so doing it inside the lane loop repeated the same
+    /// projection five times over — five lanes times seven rivals times a windowed search of
+    /// about twenty-seven segments, at 14 Hz, on eight cars. That is a few hundred thousand
+    /// point-to-segment tests a second thrown away, on a single-threaded WASM build where
+    /// physics is already the expensive system.
+    ///
+    /// Cached into a reused array, so it allocates nothing per decision.
+    /// </remarks>
+    void ScanRivals()
     {
-        float busy = 0f;
+        rivals = 0;
 
         for (int i = 0; i < Live.Count; i++)
         {
             TrafficDriver other = Live[i];
             if (other == null || other == this) continue;
-            busy += Blocking(candidate, other.transform.position);
+            AddRival(other.transform.position);
         }
 
-        if (PlayerCar.Current != null)
-            busy += Blocking(candidate, PlayerCar.Current.transform.position);
+        if (PlayerCar.Current != null) AddRival(PlayerCar.Current.transform.position);
+    }
+
+    void AddRival(Vector3 position)
+    {
+        if (rivals >= rivalGain.Length) return;
+
+        float gain = Line.Gain(position, out float across);
+
+        // Slightly ahead, not alongside: a car level with you is dealt with by the collision, and
+        // treating it as a blockage makes both cars dive for the same gap. Filtered here so the
+        // lane loop never sees a rival that cannot matter.
+        if (gain <= 3f || gain > passLookahead) return;
+
+        rivalGain[rivals] = gain;
+        rivalAcross[rivals] = across;
+        rivals++;
+    }
+
+    float Occupancy(float candidate)
+    {
+        float busy = 0f;
+
+        for (int i = 0; i < rivals; i++)
+        {
+            if (Mathf.Abs(rivalAcross[i] - candidate) > laneClearance) continue;
+
+            // Closer is worse, so a lane blocked 5 m ahead costs far more than one blocked at 30.
+            busy += 1f - rivalGain[i] / passLookahead;
+        }
 
         return busy;
     }
 
-    float Blocking(float candidate, Vector3 position)
-    {
-        float gain = Line.Gain(position, out float across);
-
-        // Slightly ahead, not alongside: a car level with you is dealt with by the collision, and
-        // treating it as a blockage makes both cars dive for the same gap.
-        if (gain <= 3f || gain > passLookahead) return 0f;
-        if (Mathf.Abs(across - candidate) > laneClearance) return 0f;
-
-        // Closer is worse, so a lane blocked 5 m ahead costs far more than one blocked at 30.
-        return 1f - gain / passLookahead;
-    }
+    /// <summary>Rivals near enough to block a lane, refreshed once per decision.</summary>
+    readonly float[] rivalGain = new float[16];
+    readonly float[] rivalAcross = new float[16];
+    int rivals;
 
     /// <summary>
     /// How badly a direction is blocked BETWEEN here and where the probe is aimed.

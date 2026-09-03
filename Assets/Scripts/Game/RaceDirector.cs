@@ -157,7 +157,9 @@ public class RaceDirector : MonoBehaviour
     [Tooltip("The whole field and how far each has got. If every AI reads 0 m while the player " +
              "climbs, their followers are not being advanced — that is a follower problem, not " +
              "a sorting one.")]
+#if UNITY_EDITOR
     [SerializeField] string standings;
+#endif
 
     /// <summary>One car in the race.</summary>
     public class Racer
@@ -551,9 +553,15 @@ public class RaceDirector : MonoBehaviour
         //
         // Every racer's metres are here: if the AI all sit at zero while the player climbs, the
         // fault is their followers, not the sort.
+        // ⚠ EDITOR ONLY. Built with string concatenation over eight racers, which is eight
+        // allocations a frame — on a 512 MB WASM heap with one thread, a debug readout nobody can
+        // see in a build is not worth any of that. The field it fills is an Inspector readout and
+        // there is no Inspector on a Chromebook.
+#if UNITY_EDITOR
         standings = "";
         for (int i = 0; i < order.Count && i < 8; i++)
             standings += $"{i + 1}. {order[i].name} {order[i].progress:0} m   ";
+#endif
 
         if (Player == null) return;
 
