@@ -295,7 +295,7 @@ public class MenuUI : MonoBehaviour
 
             swatches.Add(UiKit.Swatch(paintPanel.transform, new Vector2(px, py),
                                       new Vector2(cellW, cellH),
-                                      CarColours.Palette[i].colour,
+                                      CarColours.Palette[i].Swatch,
                                       () => PickPaint(index)));
 
             // Drawn OVER the swatch: a tick for the paint in use, a padlock for one not owned.
@@ -415,7 +415,8 @@ public class MenuUI : MonoBehaviour
 
             // Readable against the swatch it sits on. Luminance rather than a per-colour flag,
             // so a tenth paint needs no extra decision.
-            float lum = p.colour.r * 0.299f + p.colour.g * 0.587f + p.colour.b * 0.114f;
+            Color sw = p.Swatch;
+            float lum = sw.r * 0.299f + sw.g * 0.587f + sw.b * 0.114f;
             swatchTicks[i].color = lum > 0.5f ? new Color(0.08f, 0.07f, 0.09f) : UiKit.Ink;
         }
 
@@ -442,7 +443,7 @@ public class MenuUI : MonoBehaviour
 
         // Preview on the actual car, which is the only way to judge a paint: these colours
         // MULTIPLY a near-white body texture, so a swatch is always brighter than the car.
-        if (podium != null) podium.Preview(chosen.colour);
+        if (podium != null) podium.Preview(chosen);
 
         if (gearsLine != null) gearsLine.text = $"{PlayerWallet.Gears:N0} gears";
     }
@@ -967,7 +968,7 @@ public class MenuUI : MonoBehaviour
         // Wear the paint that was chosen for THIS car. Applied on every refresh rather than only
         // on a rebuild, because the car is not respawned when the paint changes — the whole point
         // of the preview is that the same instance changes colour.
-        if (podium != null) podium.Preview(CarColours.For(car.id).colour);
+        if (podium != null) podium.Preview(CarColours.For(car.id));
 
         // Offered on EVERY car, owned or not. Choosing a colour for a car you have not bought yet
         // is harmless -- the choice is stored against the car id and worn the moment it is

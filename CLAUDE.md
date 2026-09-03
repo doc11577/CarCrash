@@ -438,6 +438,43 @@ needed: the colour for when the mouse leaves, the deselect for when it stays.
 Text fields are not routed through it, and clearing the selection on a button click is what should
 happen anyway — it blurs the field, which is what commits a typed value in the dev tuner.
 
+#### The paid four are real METALS, not brighter greys — 2026-09-02
+
+A paint is a colour AND a surface. Each entry carries `metallic` and `smoothness`, written into
+the same MaterialPropertyBlock as the tint (`_Metallic`, plus `_Smoothness` and `_Glossiness` for
+the URP and Standard paths).
+
+| Paint | Reflectance | Metallic | Smoothness |
+| --- | --- | --- | --- |
+| the free five | as picked | 0 | 0.45–0.50 |
+| Silver | 248, 245, 233 | 1.0 | 0.80 |
+| Gold | 255, 195, 86 | 1.0 | 0.86 |
+| Platinum | 173, 164, 150 | 1.0 | 0.93 |
+| Phantom Black | 14, 15, 19 | 0.55 | 0.97 |
+
+- **On a metal the base colour stops being albedo and becomes the tint of the REFLECTION**, so the
+  RGB has to be the metal's measured F0 or it reads as shiny plastic. These are the standard
+  values, not eyeballed ones — which is why **platinum is DARKER than silver**. Real platinum is
+  greyer, and on the car it still reads as the more expensive finish because it is smoother.
+- **Obsidian is volcanic glass, not metal.** Phantom black keeps some diffuse (0.55) and takes the
+  highest smoothness in the palette. At full metallic it would be a black mirror with no depth.
+- **`Apply(colour)` still exists and leaves the finish alone**, which is what traffic uses —
+  negative means "do not touch", because 0 is a legitimate value for both and traffic must keep
+  the finish its material was authored with.
+
+**⚠ METAL WITH NOTHING TO REFLECT RENDERS BLACK, and nothing will say why.** The mesh, the
+material and the colour are all still correct; the car just looks like tar. Both scenes are fine
+as they stand — `MainMenu` has `m_AmbientMode: 0` (Skybox) and `m_DefaultReflectionMode: 0`, so
+the skybox supplies an environment even though the backdrop quad hides it from view, and every map
+has a real sky. **A new scene without a skybox, or ambient switched to a flat colour, breaks every
+metallic paint at once.** Check those two settings before blaming the paint.
+
+**The UI swatch is DERIVED, not the raw colour.** A flat square cannot show shine, so drawn
+honestly the 200,000 platinum looks like a duller version of the 50,000 silver. `Paint.Swatch`
+lifts the colour toward white in proportion to `metallic` — the reflected light, approximated —
+and is computed from the paint rather than hand-picked, so a tenth colour needs no second
+decision. **The value applied to the CAR is untouched.**
+
 #### Save code v2 — and the delimiter lesson, applied properly this time
 
 v1 was `version|gears|best|owned…|checksum` where the owned list was **itself** pipe-delimited, so

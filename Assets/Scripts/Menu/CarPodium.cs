@@ -339,11 +339,13 @@ public class CarPodium : MonoBehaviour
     /// `CarPaint` is DISABLED on the podium car like everything else, which does not matter:
     /// `Apply` is a plain method, not something that runs on Update.
     /// </remarks>
-    public void Preview(Color colour)
+    public void Preview(CarColours.Paint paint)
     {
         if (current == null) return;
 
-        CarPaint.Ensure(current).Apply(colour);
+        // The whole paint, not just its colour: a metal is its FINISH more than its RGB, and a
+        // preview that showed the hue without the shine would misrepresent what is being bought.
+        CarPaint.Ensure(current).Apply(paint.colour, paint.metallic, paint.smoothness);
     }
 
     /// <summary>Put a car on the podium. Pass null to clear it.</summary>

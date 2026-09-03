@@ -24,7 +24,12 @@ using UnityEngine;
 /// </remarks>
 public static class CarColours
 {
-    /// <summary>One free or buyable paint.</summary>
+    /// <summary>One free or buyable paint, including its FINISH.</summary>
+    /// <remarks>
+    /// A paint is a colour AND a surface. The paid four are sold as metals, and a metal that is
+    /// merely a lighter shade of grey is the con this palette exists to avoid — what makes silver
+    /// read as silver is `metallic`, not the RGB.
+    /// </remarks>
     public readonly struct Paint
     {
         public readonly string id;
@@ -32,17 +37,41 @@ public static class CarColours
         public readonly Color colour;
         public readonly int price;
 
+        /// <summary>URP `_Metallic`. 0 is painted bodywork, 1 is bare metal.</summary>
+        public readonly float metallic;
+
+        /// <summary>URP `_Smoothness`. Higher is a sharper, glassier reflection.</summary>
+        public readonly float smoothness;
+
+        /// <summary>
+        /// How to draw this paint as a FLAT UI swatch.
+        /// </summary>
+        /// <remarks>
+        /// **A flat square cannot show shine, and that makes the honest colours misleading.**
+        /// Platinum's reflectance is correctly duller than silver's — real platinum is greyer —
+        /// so drawn raw, the 200,000 paint looks like a worse version of the 50,000 one. On the
+        /// car it does not, because most of what you see off a metal is reflected light.
+        ///
+        /// Lifting the swatch toward white in proportion to `metallic` is that reflected light,
+        /// approximated. Derived from the paint rather than hand-picked per colour, so a tenth
+        /// paint needs no second decision — and the value on the CAR is untouched.
+        /// </remarks>
+        public Color Swatch => Color.Lerp(colour, Color.white, metallic * 0.3f);
+
         /// <summary>Free paints are owned by everyone and never written to prefs.</summary>
         public bool Free => price <= 0;
 
         public bool Owned => Free || PlayerPrefs.GetInt(OwnedKey(id), 0) == 1;
 
-        public Paint(string id, string displayName, Color colour, int price)
+        public Paint(string id, string displayName, Color colour, int price,
+                     float metallic, float smoothness)
         {
             this.id = id;
             this.displayName = displayName;
             this.colour = colour;
             this.price = price;
+            this.metallic = metallic;
+            this.smoothness = smoothness;
         }
     }
 
@@ -59,16 +88,26 @@ public static class CarColours
     /// </remarks>
     public static readonly Paint[] Palette =
     {
-        new Paint("white",    "WHITE",         Rgb(232, 232, 230),      0),
-        new Paint("red",      "RED",           Rgb(122,  23,  28),      0),
-        new Paint("navy",     "NAVY",          Rgb( 31,  51, 102),      0),
-        new Paint("green",    "RACING GREEN",  Rgb( 26,  66,  43),      0),
-        new Paint("graphite", "GRAPHITE",      Rgb( 61,  64,  69),      0),
+        //                                                              price  metal  smooth
+        new Paint("white",    "WHITE",         Rgb(232, 232, 230),      0,     0f,    0.50f),
+        new Paint("red",      "RED",           Rgb(122,  23,  28),      0,     0f,    0.50f),
+        new Paint("navy",     "NAVY",          Rgb( 31,  51, 102),      0,     0f,    0.50f),
+        new Paint("green",    "RACING GREEN",  Rgb( 26,  66,  43),      0,     0f,    0.50f),
+        new Paint("graphite", "GRAPHITE",      Rgb( 61,  64,  69),      0,     0f,    0.45f),
 
-        new Paint("silver",   "SILVER",        Rgb(186, 191, 198),  50000),
-        new Paint("gold",     "GOLD",          Rgb(196, 154,  56), 100000),
-        new Paint("platinum", "PLATINUM",      Rgb(222, 226, 231), 200000),
-        new Paint("phantom",  "PHANTOM BLACK", Rgb( 18,  19,  24), 500000),
+        // **The metals use real reflectance values, not "a lighter grey".** On a metallic
+        // surface the base colour stops being albedo and becomes the tint of the REFLECTION, so
+        // the RGB has to be the metal's actual F0 or it reads as painted plastic that happens to
+        // be shiny. These are the standard measured figures.
+        new Paint("silver",   "SILVER",        Rgb(248, 245, 233),  50000,     1f,    0.80f),
+        new Paint("gold",     "GOLD",          Rgb(255, 195,  86), 100000,     1f,    0.86f),
+        new Paint("platinum", "PLATINUM",      Rgb(173, 164, 150), 200000,     1f,    0.93f),
+
+        // Obsidian is volcanic GLASS, not metal: near-black, and glossier than any of the metals.
+        // Full metallic would make it a black mirror with no depth, so it keeps some diffuse and
+        // takes the highest smoothness in the palette. Platinum being darker than silver is
+        // correct and deliberate — real platinum is greyer.
+        new Paint("phantom",  "PHANTOM BLACK", Rgb( 14,  15,  19), 500000,  0.55f,    0.97f),
     };
 
     public const string DefaultId = "white";

@@ -29,6 +29,9 @@ public class CarPaint : MonoBehaviour
 
     static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     static readonly int ColorId = Shader.PropertyToID("_Color");
+    static readonly int MetallicId = Shader.PropertyToID("_Metallic");
+    static readonly int SmoothnessId = Shader.PropertyToID("_Smoothness");
+    static readonly int GlossinessId = Shader.PropertyToID("_Glossiness");
 
     /// <summary>One submesh to paint: a renderer and WHICH of its materials.</summary>
     struct Slot
@@ -96,7 +99,6 @@ public class CarPaint : MonoBehaviour
         }
     }
 
-    /// <summary>Repaint. Safe to call before Start — it collects on demand.</summary>
     /// <summary>
     /// The car's <see cref="CarPaint"/>, adding one if the prefab has none. Never returns null.
     /// </summary>
@@ -120,7 +122,31 @@ public class CarPaint : MonoBehaviour
         return paint != null ? paint : car.AddComponent<CarPaint>();
     }
 
-    public void Apply(Color paint)
+    /// <summary>
+    /// Tint the bodywork, leaving the material's own finish alone. What traffic uses.
+    /// </summary>
+    public void Apply(Color paint) => Apply(paint, -1f, -1f);
+
+    /// <summary>
+    /// Tint the bodywork AND set its finish. Negative metallic or smoothness leaves that one as
+    /// the material has it.
+    /// </summary>
+    /// <remarks>
+    /// **A colour alone cannot make gold look like gold.** On a metallic surface the base colour
+    /// stops being albedo and becomes the tint of the reflection, so metal is `_Metallic` plus a
+    /// real reflectance value — a lighter grey with no metallic is shiny plastic.
+    ///
+    /// **Metal with nothing to reflect renders BLACK**, which is the trap here. Both scenes are
+    /// fine as they stand: `MainMenu` has `m_AmbientMode: 0` and `m_DefaultReflectionMode: 0`, so
+    /// the skybox supplies an environment even though the backdrop quad hides it from view, and
+    /// every map has a real sky. **Anything that turns ambient to a flat colour, or a scene added
+    /// without a skybox, will make every metallic paint look like tar** — and nothing will say
+    /// why, because the mesh, the material and the colour are all still correct.
+    ///
+    /// Negative means "do not touch" rather than 0, because 0 is a legitimate value for both and
+    /// traffic must keep whatever finish its material was authored with.
+    /// </remarks>
+    public void Apply(Color paint, float metallic, float smoothness)
     {
         colour = paint;
 
@@ -141,6 +167,17 @@ public class CarPaint : MonoBehaviour
             // URP Lit uses _BaseColor; the older Standard path uses _Color. Setting a property
             // the shader does not have is harmless, so both go in rather than sniffing.
             block.SetColor(ColorId, paint);
+
+            if (metallic >= 0f) block.SetFloat(MetallicId, Mathf.Clamp01(metallic));
+
+            // _Smoothness is URP Lit; _Glossiness is the same idea on the Standard path. Both,
+            // for the same reason the two colour properties are both set.
+            if (smoothness >= 0f)
+            {
+                block.SetFloat(SmoothnessId, Mathf.Clamp01(smoothness));
+                block.SetFloat(GlossinessId, Mathf.Clamp01(smoothness));
+            }
+
             slot.renderer.SetPropertyBlock(block, slot.index);
         }
     }
