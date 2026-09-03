@@ -675,7 +675,7 @@ off — threads need COOP/COEP headers Google Sites will never send), `webGLData
 Untested lever if the Chromebook is slow: capping `devicePixelRatio` to 1. HiDPI Chromebooks
 render far more pixels than the GPU can afford. Measure before reaching for it.
 
-## NEXT SESSION — pick up here (updated 2026-09-02, Update 2 shipped)
+## NEXT SESSION — pick up here (updated 2026-09-02, end of session: RACE MODE is next)
 
 **Update 2 is BUILT, PUSHED AND LIVE on Google Sites** — commit `b888188`, embed pinned by
 `6d2aa86`, **25.04 MB total, 18.20 MB in the data file.** Four maps (Quarry01, Everest,
@@ -683,29 +683,55 @@ Bullseye, The Dam), four cars (E30, P72, LCT 3000 truck, Aventador), falling bou
 scoring, the podium garage, save codes, the turn-assist handling fix, and a dev tuner that takes
 typed values and remembers them per car.
 
-### DO THIS FIRST NEXT TIME: split the build files
+### DO THIS FIRST NEXT TIME
 
-**Agreed 2026-09-02 and deferred deliberately — it is the first thing to build next session.**
+**Two things, in this order.**
 
-`publish.sh` should cut any `prod/` file over ~18 MB into `name.partN`, and `tools/embed.html`
-should fetch the parts, merge them into a Blob and hand Unity the `blob:` URL. **See "THE 20 MB
-CAP CAN BE DEFEATED BY SPLITTING THE FILE" in the build-size section for the working code**,
-read off another Unity game running from the same CDN on a Google Site.
+**1. RACE MODE is the new direction — see the RACE MODE section for the full brief.** The game is
+shifting from a destruction game to an arcade racer, with destruction kept as one of two modes.
+Nothing is built. The brief, the decisions already made, and a suggested build order are written
+up; start there rather than from scratch. **Its first step is a PERF MEASUREMENT, not code** —
+8 cars is double what has ever been measured on the Chromebook.
 
-Why it goes first: **it retires the constraint that has shaped every content decision in this
-project.** Two releases in a row have been fights with the per-file cap — Update 2's first build
-came out at 35.32 MB and would not have loaded at all. Splitting makes that class of failure
-impossible, and it does it without moving off jsDelivr, which is the one host known to get
-through the school filter.
+**2. SPLIT THE BUILD FILES.** Still not done, still the thing that retires the per-file cap.
+`publish.sh` cuts any `prod/` file over ~18 MB into `name.partN`; `tools/embed.html` fetches and
+Blob-merges them. Working code is in the build-size section. Roughly an hour. It stopped being
+urgent when the font trim landed, but it is what makes a fourth and fifth map a non-question.
 
-Keep the commit pin when doing it. The game that revealed the technique serves from `@main`,
-which is the stale-cache trap documented in the deploy section.
+### Built since Update 2 shipped, and NOT yet released
+
+All committed, none of it in the live build — the live site is still `b888188`. A release needs a
+rebuild, `publish.sh`, push, `pin.sh`, and re-pasting `embed.html`.
+
+- **TMP font trimmed** — 2.15 MB stock asset out, 654 KB in. ~1.5 MB off the download.
+- **Unused assets deleted** — CosmoCars and 20 loose Kenney FBXs, 89 files.
+- **The paint shop** — 5 free colours, 4 bought (silver/gold/platinum/phantom black), per car,
+  with real metallic finishes. Save code v2 carries it.
+- **`.crash` file save** — download and upload progress as a file. **Ethan had not yet tested
+  this on a real build when the session ended.**
+- **Four bug fixes** — traffic self-damage paying the player, the PvP popup hiding under your own,
+  the airtime timer restarting mid-flight, the empty podium.
+- **Buttons stuck grey after a click** — uGUI ranks SELECTED above HIGHLIGHTED; `UiKit` now clears
+  the selection after every click.
+
+### ⚠ STILL UNDECIDED, and it blocks pricing anything new
+
+**`gearsPerDamage` is `1` in every scene against an intended `0.02`, and `gearsPerPartHealth` is
+`5` against `0.25`** — 50x and 20x, the leftover debugging values this file has flagged as
+unconfirmed since they were written. It was raised with Ethan and deliberately NOT changed:
+the paint prices (50,000–500,000) and the Aventador's 100,000 were all set against the CURRENT
+inflated rates, so "fixing" it silently makes everything ~50x more expensive.
+
+**Race mode adds more payouts, so decide this before pricing them.** Either keep the inflated
+rates and treat them as the real economy, or fix them and rescale every price at once.
 
 ### State on disk
 
-**Everything is committed as of 2026-09-02.** `b888188` is Update 2 in full; `6d2aa86` pins the
-embed to it and may still be unpushed — check `git log origin/master..HEAD`. Both split FBX
-metas carry `isReadable: 1`, which deformation requires.
+**Everything is committed as of 2026-09-02, but TEN COMMITS ARE UNPUSHED** — check
+`git log origin/master..HEAD` first thing. The live site is still `b888188` (Update 2); everything
+listed above sits in local commits on top of it.
+
+Both split FBX metas carry `isReadable: 1`, which deformation requires.
 
 ### Size, in proportion
 
@@ -880,6 +906,83 @@ re-measure, the Chromebook frame rate, and banking to `PlayerWallet`. All are re
 - **`split_car.py` does not reorient geometry**, which is what forced `wheelVisualEuler` to
   exist. Fixing it at source means a re-export and a full re-wire; not worth it for one car.
 
+## RACE MODE — designed 2026-09-02, NOT STARTED
+
+**The direction the game is going: from a destruction game to an intense arcade racer**, with
+destruction kept as one of two modes. Ethan's reference is Asphalt 8. Nothing below is built —
+this is the brief plus the decisions already made, so the next session starts from a plan rather
+than from a paragraph.
+
+### What race mode is
+
+- **Two modes, both paying gears: RACE and DESTRUCTION.** Destruction is exactly what exists now.
+- **8 racers: the player plus 7 AI.**
+- **3 laps** for now.
+- **Everything destructible EXCEPT the tyres.** Losing a wheel ends a race, so wheels are the one
+  part that must not come off — see the note below, this is not just "raise wheel health".
+- **R returns to the last CHECKPOINT, it does not restart the race.** `RunRestart` reloads the
+  scene today; race mode needs a respawn instead.
+- **Gears from:** finishing 1st / 2nd / 3rd, sustained speed, airtime, near-missing cars, and
+  hitting or wrecking other cars.
+- **Boost pads and nitro are LATER.** Explicitly deferred — get the mode working first.
+- **The Dam is the first race map.**
+- **Map select has to be rebuilt** around picking a mode and then a map.
+
+### What already exists and should be reused, not rewritten
+
+- **The probe fan is the reusable half of the AI, and this is the swap it was written for.**
+  `TrafficDriver.Decide()` scores each probe direction as
+  `drop − hazard × hazardWeight − |angle| × bias`. **Replace the `drop` term with progress along
+  the track and leave everything else alone** — the hazard sweep, `InterpolatedAngle`,
+  `SeparationBias`, the sideslip correction and the speed-scaled lookahead all apply unchanged to
+  a race. Descent-seeking, `TurnaroundSteer`, the full-circle scan and `arrived` are what get
+  replaced.
+- **`ICarDriver`** already lets an AI drive the same `CarController` the player does. Race AI must
+  stay on it — traffic that moves by its own rules always feels on rails next to a real car.
+- **`RunScore.Award()`** exists precisely so a rule belonging to ONE mode does not have to live
+  inside `RunScore`. Placement, near-miss and speed bonuses go through it, the way
+  `DartboardScore` does.
+- **`CarDamage.Damaged`** already carries source and `byPlayer`, so "you hit them" is answerable.
+- **`GameSelection`** stores map and car by string id; a mode id belongs there too.
+
+### Decisions already made
+
+- **Waypoints, not a spline.** A `RaceTrack` component reading ordered CHILD TRANSFORMS, with
+  gizmos and a validator. Hand-placed empties are tedious once and visual forever; a generated
+  path from the mesh is a research project, and a runtime recorder cannot persist from play mode
+  without Editor code. Roughly 20–30 points should carry The Dam.
+- **Tyres are protected by EXCLUSION, not by health.** `CarDamage.Part.wheelIndex >= 0` already
+  identifies a wheel as a fact rather than a guess — race mode should skip detachment for those
+  parts outright. Giving wheels huge health instead means a long enough race still eventually
+  ends in a lost wheel, which is the bug arriving later rather than never.
+- **Position is `lap × trackLength + distance along lap`**, compared between racers. Checkpoints
+  are for RESPAWN and for anti-cheat ordering, not for the position sort itself.
+
+### ⚠ Measure this FIRST, before building on it
+
+**8 cars is DOUBLE what has ever been measured.** The 60 FPS Jasper Lake result was 4 cars, each
+doing 4 SphereCasts plus ~4 AI casts per physics step, on ONE WASM thread — `webGLThreadsSupport`
+is off and `SystemInfo.processorCount` reports 1. Physics is already named in this file as the
+most expensive system in the game and rigidbody count as the first thing to blow it.
+
+**Put 8 cars on The Dam and read `FPS` / `worst` off the dev readout before writing the race
+logic.** If it will not hold, the answer is fewer AI or cheaper AI, and that is much better known
+before the mode is built around eight. Turn `FallingBoulders` OFF on race maps regardless — 16
+boulders plus 8 cars is far past the 40-rigidbody budget.
+
+### Suggested build order
+
+1. **`Track/RaceTrack.cs`** — waypoints from child transforms, progress-along-lap maths, nearest
+   point for respawn, gizmos, validation. Everything else depends on it.
+2. **Perf check** — 8 cars on The Dam, read the readout. See above.
+3. **AI follows the track** — swap the `drop` term in `Decide()` for track progress; delete
+   nothing else.
+4. **`Game/RaceDirector.cs`** — laps, positions, finish order, R-to-checkpoint respawn.
+5. **Race scoring** — placement, speed, airtime, near miss, PvP, via `RunScore.Award()`.
+6. **Menu** — mode select, then map select. `GameSelection` gains a mode id.
+7. **Wheels made undetachable in race mode.**
+8. Later: boost pads, nitro.
+
 ## Roadmap
 
 Live kanban board (add/move/delete cards, saves itself):
@@ -909,7 +1012,12 @@ Build order — expensive unknowns first, content last:
    · **points for wrecking other cars** · **a dev tuner that takes typed values and saves them**
    · **UPDATE 2 shipped to Google Sites, 25.04 MB, commit `b888188`**
 
-2. **Now — SPLIT THE BUILD FILES.** Cut any `prod/` file over ~18 MB into `name.partN` in
+2. **Now — RACE MODE.** The game is shifting from a destruction game to an arcade racer, with
+   destruction kept as one of two modes. See the RACE MODE section for the brief, the decisions
+   already made and a build order. **Its first step is a perf measurement, not code** — 8 cars is
+   double what has ever been measured on the Chromebook.
+
+   **Then SPLIT THE BUILD FILES.** Cut any `prod/` file over ~18 MB into `name.partN` in
    `publish.sh`, fetch and Blob-merge them in `tools/embed.html`, hand Unity the `blob:` URL.
    Working code is in the build-size section under "THE 20 MB CAP CAN BE DEFEATED BY SPLITTING
    THE FILE". **This retires the per-file cap**, which has been the binding constraint on
@@ -1871,8 +1979,10 @@ Ethan's, recorded so they are not lost. Nothing here is designed or scheduled.
   probe fan is reusable for avoidance; the direction source becomes "toward the player" instead
   of "steepest descent", which is exactly the swap the traffic AI's known limitation already
   anticipates.
-- **Race mode.** The traffic AI already races to the bottom, so this is mostly scoring,
-  positions and a finish line rather than new driving code.
+- ~~**Race mode.**~~ **PROMOTED 2026-09-02 to the main roadmap — see the RACE MODE section.** The
+  note here used to say it was "mostly scoring, positions and a finish line rather than new
+  driving code", which was wrong: the AI races to the BOTTOM, not around a circuit, so the
+  direction source genuinely has to be replaced. The probe fan survives; descent-seeking does not.
 - **Destruction derby mode.** An arena rather than a descent, last car running wins. Note this
   breaks descent-seeking completely — there is no downhill in an arena — so it is the mode that
   forces the AI's direction source to be replaced properly.
