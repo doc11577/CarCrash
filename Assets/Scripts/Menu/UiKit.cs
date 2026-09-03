@@ -134,6 +134,47 @@ public static class UiKit
     }
 
     /// <summary>
+    /// A solid block of colour that can be clicked. For the paint shop, where the colour IS the
+    /// label and a caption underneath would say less than the swatch does.
+    /// </summary>
+    /// <remarks>
+    /// A `ColorBlock` MULTIPLIES the target graphic's colour rather than replacing it, which is
+    /// exactly what is wanted here: the Image carries the paint, and the block only brightens on
+    /// hover and dims on press. Feeding the paint through the ColorBlock instead would fight the
+    /// hover states and make every swatch the same shade at rest.
+    ///
+    /// `selectedColor` matches `normalColor` for the reason recorded in CLAUDE.md: Unity leaves a
+    /// clicked button SELECTED, and a selected button keeps drawing `selectedColor` after the
+    /// pointer leaves — so every swatch ever clicked would stay lit.
+    /// </remarks>
+    public static UnityEngine.UI.Button Swatch(Transform parent, Vector2 pos, Vector2 box,
+                                               Color colour, Action onClick)
+    {
+        GameObject go = new GameObject("Swatch", typeof(RectTransform));
+        go.transform.SetParent(parent, false);
+
+        Image block = go.AddComponent<Image>();
+        block.color = colour;
+
+        UnityEngine.UI.Button button = go.AddComponent<UnityEngine.UI.Button>();
+        button.targetGraphic = block;
+        if (onClick != null) button.onClick.AddListener(() => onClick());
+
+        Centre((RectTransform)go.transform, pos, box);
+
+        ColorBlock colours = button.colors;
+        colours.normalColor = Color.white;
+        colours.highlightedColor = new Color(1.35f, 1.35f, 1.35f, 1f);
+        colours.pressedColor = new Color(0.75f, 0.75f, 0.75f, 1f);
+        colours.selectedColor = Color.white;
+        colours.disabledColor = new Color(1f, 1f, 1f, 0.35f);
+        colours.fadeDuration = 0.08f;
+        button.colors = colours;
+
+        return button;
+    }
+
+    /// <summary>
     /// Recolour a button as accented or plain. Separate from construction so a selection can be
     /// moved between buttons at runtime — with one car in the list that is invisible, with two
     /// it is the only thing telling you which one is chosen.

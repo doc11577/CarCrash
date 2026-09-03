@@ -87,6 +87,15 @@ public class PlayerCarSpawner : MonoBehaviour
         // car itself stays free of any notion of saved state — the spawner is the one thing that
         // knows which roster entry this is, and its id is the key the values are stored under.
         CarTuning.Apply(car.GetComponent<CarController>(), entry.id);
+
+        // And the paint the player chose for THIS car. Same argument as the tuning above: the
+        // car knows nothing about saved state, and the spawner is the one thing holding the
+        // roster id that the choice is stored under.
+        //
+        // CarPaint may be absent on a prefab that was never set up for tinting, which is not an
+        // error — it just means that car is whatever colour its texture is.
+        CarPaint paint = car.GetComponent<CarPaint>();
+        if (paint != null) paint.Apply(CarColours.For(entry.id).colour);
     }
 
     void OnDestroy()

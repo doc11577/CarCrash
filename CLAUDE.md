@@ -311,6 +311,62 @@ Sketch of the work: a chunking step in `publish.sh` that cuts any `prod/` file o
 `embed.html` already has the bar and the on-screen error pane, so it is a modest change to a
 file that is already hand-written for this job.
 
+### The paint shop — built 2026-09-02
+
+Five free colours and four bought ones, chosen per car in the garage. **No wiring: it is all
+code-built like the rest of the front end.** `Game/CarColours.cs` owns the palette and the
+persistence; `MenuUI` builds the panel; `PlayerCarSpawner` applies the choice on spawn.
+
+| Paint | Price |
+| --- | --- |
+| White, Red, Navy, Racing Green, Graphite | free |
+| Silver | 50,000 |
+| Gold | 100,000 |
+| Platinum | 200,000 |
+| Phantom Black | 500,000 |
+
+- **The palette is a static table, not an Inspector list.** Prices and unlocks are content two
+  places must agree on — the garage that sells them and the spawner that applies them — and
+  `CarRoster` already taught this project that two copies of a list drift silently.
+- **Colour is stored PER CAR, ownership is GLOBAL.** Painting the truck must not repaint the
+  Aventador, but buying phantom black four times over is a wall rather than a progression curve.
+- **Ownership by ID, never by index**, so reordering the palette cannot hand out an unbought
+  colour. Free paints are never written to prefs — owned by definition, and storing them means one
+  can be lost by clearing storage. `For()` also falls back to the default if the stored paint is
+  no longer owned, so a reset or another profile's save code cannot leave a car wearing something
+  unpaid for.
+- **The paid four are a different KIND of finish, not a brighter hue.** Something costing 500,000
+  gears has to look like a different material or the purchase reads as a con. The free five stay
+  muted for the reason under `CarPaint`: these MULTIPLY a near-white body texture, so anything
+  saturated comes out as flat poster colour.
+- **Clicking a swatch only HIGHLIGHTS it; the action button selects or buys.** One misclick must
+  not spend 500,000 gears. Owned paints could safely apply on click, but one rule for all nine is
+  easier to trust than a rule that changes with what you can afford.
+- **The preview goes through the car's own `CarPaint`**, the same component the spawner uses, so
+  the podium and the car that drives out cannot disagree. Judging a paint on a swatch is not
+  possible — the swatch is always brighter than the car.
+- **`CarPodium.StageOffset` slides the plinth and car, never the rig.** The backdrop quad is a
+  child of the rig and deliberately overfills the frustum; sliding it would drag the lattice off
+  one edge. The shift is computed from the CAMERA'S right vector and converted into rig space,
+  because the rig is rotated to face back at the camera so its local X is screen-LEFT — exactly
+  the sign that gets guessed wrong once and hard-coded around.
+- The panel closes when the garage is left or the car is changed: it shows what THIS car wears.
+
+#### Save code v2 — and the delimiter lesson, applied properly this time
+
+v1 was `version|gears|best|owned…|checksum` where the owned list was **itself** pipe-delimited, so
+the field count was variable and the parser had to take the fixed fields off the front and the
+checksum off the back. That worked, but it only works for ONE inner list — and paints need three
+(cars, paints, car-to-paint choices).
+
+**v2 re-joins the inner lists with COMMAS and keeps the top level a fixed seven fields.** That is
+the real fix for the bug v1 shipped with: *a delimited list inside a delimited format needs a
+different delimiter, not a cleverer parser.*
+
+**C1 codes are still READ, never written.** A code someone saved yesterday has to keep working; a
+save system that loses progress to a format change is worse than no save system. A v1 code simply
+restores no paints.
+
 ### Four bugs from one play session — 2026-09-02
 
 Reported together, and two of them turned out to be the same bug.
@@ -994,6 +1050,7 @@ stays over it.** Argue new content down on download time and rigidbody count, no
 | `Game/ScoreHud.cs` | Gear counter, combo bar, airtime, MPH speedometer and floating popups. Builds its own canvases in code. |
 | `Game/PlayerWallet.cs` | Persistent gear balance, best run and owned cars, in PlayerPrefs. |
 | `Game/SaveCode.cs` | Progress as a copy-paste text code. Works when browser storage does not. |
+| `Game/CarColours.cs` | The paint shop: palette, prices, what is owned, and which car wears which. |
 | `Game/SaveHealth.cs` | Counts launches to prove whether this browser actually persists anything. |
 | `AI/TrafficDriver.cs` | Traffic AI. Steers at the biggest ground drop ahead. See the known limitation. |
 | `AI/TrafficSpawner.cs` | Spawns the traffic grid, paints it, optionally registers it for scoring. |

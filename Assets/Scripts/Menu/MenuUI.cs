@@ -101,6 +101,25 @@ public class MenuUI : MonoBehaviour
     bool resetArmed;
     int carIndex;
 
+    // ---- paint shop -------------------------------------------------------------------------
+    GameObject paintPanel;
+    UnityEngine.UI.Button paintButton;
+    TextMeshProUGUI paintTitle;
+    TextMeshProUGUI paintStatus;
+    UnityEngine.UI.Button paintAction;
+    TextMeshProUGUI paintActionLabel;
+    readonly List<UnityEngine.UI.Button> swatches = new List<UnityEngine.UI.Button>();
+    readonly List<TextMeshProUGUI> swatchTicks = new List<TextMeshProUGUI>();
+    bool paintOpen;
+    int paintIndex;
+
+    /// <summary>Metres the podium slides left while the paint shop is open.</summary>
+    /// <remarks>
+    /// Negative is screen-left — see <see cref="CarPodium.StageOffset"/>. Sized so the car clears
+    /// the swatch grid on a 16:9 view without falling off the left edge on a narrow one.
+    /// </remarks>
+    const float PaintShift = -2.6f;
+
     void Awake()
     {
         if (TMP_Settings.defaultFontAsset == null)
@@ -230,6 +249,204 @@ public class MenuUI : MonoBehaviour
         return page;
     }
 
+    /// <summary>
+    /// The paint shop: a grid of swatches on the right, with the car slid out from under them.
+    /// </summary>
+    /// <remarks>
+    /// Built once and hidden, like every other page here, rather than created on demand — the
+    /// swatch count is fixed by the palette and rebuilding nine buttons per open would be work
+    /// for nothing.
+    ///
+    /// **The grid is laid out from the palette length, not from nine hand-placed positions.**
+    /// This project has now hit that bug twice (the garage at three cars, the dev tuner at twelve
+    /// rows), so a tenth colour must not need a coordinate edit.
+    /// </remarks>
+    void BuildPaintPanel(Transform parent)
+    {
+        paintPanel = new GameObject("PaintPanel", typeof(RectTransform));
+        paintPanel.transform.SetParent(parent, false);
+        RectTransform rect = (RectTransform)paintPanel.transform;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        const float x = 430f;
+
+        paintTitle = UiKit.Text(paintPanel.transform, "PAINT", 44f, UiKit.Accent,
+                                TextAlignmentOptions.Center, new Vector2(x, 250f),
+                                new Vector2(620f, 60f));
+        paintTitle.fontStyle = FontStyles.Bold;
+
+        swatches.Clear();
+        swatchTicks.Clear();
+
+        const int columns = 3;
+        const float cellW = 170f, cellH = 92f, gapX = 16f, gapY = 14f;
+
+        for (int i = 0; i < CarColours.Palette.Length; i++)
+        {
+            int index = i;
+            int col = i % columns;
+            int row = i / columns;
+
+            float px = x + (col - (columns - 1) * 0.5f) * (cellW + gapX);
+            float py = 150f - row * (cellH + gapY);
+
+            swatches.Add(UiKit.Swatch(paintPanel.transform, new Vector2(px, py),
+                                      new Vector2(cellW, cellH),
+                                      CarColours.Palette[i].colour,
+                                      () => PickPaint(index)));
+
+            // Drawn OVER the swatch: a tick for the paint in use, a padlock for one not owned.
+            // On the swatch rather than beside it, because a caption column would double the
+            // width of the grid to say something the swatch can carry itself.
+            swatchTicks.Add(UiKit.Text(paintPanel.transform, "", 34f, UiKit.Ink,
+                                       TextAlignmentOptions.Center, new Vector2(px, py),
+                                       new Vector2(cellW, cellH)));
+        }
+
+        float gridBottom = 150f - ((CarColours.Palette.Length - 1) / columns) * (cellH + gapY)
+                           - cellH * 0.5f;
+
+        paintStatus = UiKit.Text(paintPanel.transform, "", 28f, UiKit.Ink,
+                                 TextAlignmentOptions.Center,
+                                 new Vector2(x, gridBottom - 40f), new Vector2(620f, 40f));
+
+        paintAction = UiKit.Button(paintPanel.transform, "SELECT",
+                                   new Vector2(x, gridBottom - 100f), new Vector2(340f, 66f),
+                                   PaintAct, accent: true);
+        paintActionLabel = paintAction.GetComponentInChildren<TextMeshProUGUI>();
+
+        UiKit.Button(paintPanel.transform, "DONE", new Vector2(x, gridBottom - 176f),
+                     new Vector2(240f, 58f), () => SetPaintOpen(false));
+
+        paintPanel.SetActive(false);
+    }
+
+    void TogglePaint() => SetPaintOpen(!paintOpen);
+
+    /// <summary>Open or close the paint shop, sliding the podium out of the way.</summary>
+    void SetPaintOpen(bool open)
+    {
+        paintOpen = open;
+
+        if (paintPanel != null) paintPanel.SetActive(open);
+        if (podium != null) podium.StageOffset = open ? PaintShift : 0f;
+
+        // The car's own controls have no meaning while the paint shop is up, and leaving them
+        // live invites buying a car while looking at swatches.
+        if (actionButton != null) actionButton.gameObject.SetActive(!open);
+        if (paintButton != null) paintButton.gameObject.SetActive(!open);
+
+        if (open)
+        {
+            CarRoster.Entry car = Selected();
+            paintIndex = IndexOfPaint(car != null ? CarColours.For(car.id).id
+                                                  : CarColours.DefaultId);
+            RefreshPaint();
+        }
+    }
+
+    static int IndexOfPaint(string paintId)
+    {
+        for (int i = 0; i < CarColours.Palette.Length; i++)
+            if (CarColours.Palette[i].id == paintId) return i;
+        return 0;
+    }
+
+    /// <summary>Highlight a swatch. Selecting or buying is the action button's job.</summary>
+    /// <remarks>
+    /// Deliberately NOT "click a swatch to buy it". Phantom black is 500,000 gears — roughly a
+    /// whole progression — and a single misclick spending that would be indefensible. Owned
+    /// paints could safely apply on click, but having one rule for all nine is easier to trust
+    /// than a rule that changes depending on what you can afford.
+    /// </remarks>
+    void PickPaint(int index)
+    {
+        paintIndex = Mathf.Clamp(index, 0, CarColours.Palette.Length - 1);
+        RefreshPaint();
+    }
+
+    /// <summary>Select the highlighted paint, or buy it if it is not owned yet.</summary>
+    void PaintAct()
+    {
+        CarRoster.Entry car = Selected();
+        if (car == null) return;
+
+        CarColours.Paint paint = CarColours.Palette[paintIndex];
+
+        if (!paint.Owned)
+        {
+            if (!CarColours.Buy(paint.id))
+            {
+                paintStatus.color = UiKit.Accent;
+                paintStatus.text = $"{paint.price - PlayerWallet.Gears:N0} gears short";
+                return;
+            }
+        }
+
+        CarColours.Choose(car.id, paint.id);
+        RefreshCars();
+        RefreshPaint();
+    }
+
+    /// <summary>Repaint the swatch grid, the status line and the action button.</summary>
+    void RefreshPaint()
+    {
+        if (paintPanel == null || !paintOpen) return;
+
+        CarRoster.Entry car = Selected();
+        if (car == null) return;
+
+        string worn = CarColours.For(car.id).id;
+
+        for (int i = 0; i < swatches.Count && i < CarColours.Palette.Length; i++)
+        {
+            CarColours.Paint p = CarColours.Palette[i];
+
+            // A tick for the paint in use, a padlock for one not bought, and the highlighted
+            // one gets brackets — three states told apart without colour, which matters on a
+            // grid where colour is the content.
+            string mark = !p.Owned ? "●" : p.id == worn ? "✓" : "";
+            if (i == paintIndex) mark = mark.Length > 0 ? "[" + mark + "]" : "[  ]";
+
+            swatchTicks[i].text = mark;
+
+            // Readable against the swatch it sits on. Luminance rather than a per-colour flag,
+            // so a tenth paint needs no extra decision.
+            float lum = p.colour.r * 0.299f + p.colour.g * 0.587f + p.colour.b * 0.114f;
+            swatchTicks[i].color = lum > 0.5f ? new Color(0.08f, 0.07f, 0.09f) : UiKit.Ink;
+        }
+
+        CarColours.Paint chosen = CarColours.Palette[paintIndex];
+
+        if (!chosen.Owned)
+        {
+            paintStatus.color = UiKit.Accent;
+            paintStatus.text = $"{chosen.displayName}  ·  {chosen.price:N0} gears";
+            paintActionLabel.text = "BUY";
+        }
+        else if (chosen.id == worn)
+        {
+            paintStatus.color = UiKit.Muted;
+            paintStatus.text = $"{chosen.displayName}  ·  in use";
+            paintActionLabel.text = "IN USE";
+        }
+        else
+        {
+            paintStatus.color = UiKit.Ink;
+            paintStatus.text = $"{chosen.displayName}  ·  owned";
+            paintActionLabel.text = "SELECT";
+        }
+
+        // Preview on the actual car, which is the only way to judge a paint: these colours
+        // MULTIPLY a near-white body texture, so a swatch is always brighter than the car.
+        if (podium != null) podium.Preview(chosen.colour);
+
+        if (gearsLine != null) gearsLine.text = $"{PlayerWallet.Gears:N0} gears";
+    }
+
     GameObject BuildCars()
     {
         GameObject page = NewPage("Cars");
@@ -279,9 +496,18 @@ public class MenuUI : MonoBehaviour
         // ONE action button that changes meaning, rather than a BUY and a GO sitting side by
         // side with one of them always dead. What you can do with the selected car is never
         // both at once.
-        actionButton = UiKit.Button(page.transform, "GO", new Vector2(0f, -310f),
-                                    new Vector2(440f, 78f), Act, accent: true);
+        //
+        // PAINT sits beside it rather than replacing it, because painting is not an alternative
+        // to going — it is something you do and then go. It only appears for a car you own,
+        // since there is nothing to paint otherwise.
+        actionButton = UiKit.Button(page.transform, "GO", new Vector2(-120f, -310f),
+                                    new Vector2(400f, 78f), Act, accent: true);
         actionLabel = actionButton.GetComponentInChildren<TextMeshProUGUI>();
+
+        paintButton = UiKit.Button(page.transform, "PAINT", new Vector2(190f, -310f),
+                                   new Vector2(220f, 78f), TogglePaint);
+
+        BuildPaintPanel(page.transform);
 
         // Lower than every other page's BACK: the garage is the only screen with a name, a
         // blurb, a status line, an action button AND a licence credit stacked under the podium.
@@ -414,6 +640,14 @@ public class MenuUI : MonoBehaviour
             : "Off. Enter the code to unlock car tuning and gears.";
     }
 
+    /// <summary>The roster entry currently on the podium, or null if the roster is empty.</summary>
+    CarRoster.Entry Selected()
+    {
+        CarRoster.Entry[] entries = Entries();
+        if (entries.Length == 0) return null;
+        return entries[Mathf.Clamp(carIndex, 0, entries.Length - 1)];
+    }
+
     CarRoster.Entry[] Entries()
     {
         return roster != null && roster.cars != null
@@ -463,6 +697,10 @@ public class MenuUI : MonoBehaviour
         // that while the mount is still switched off from the last visit means the whole car is
         // assembled inside an inactive hierarchy.
         if (podium != null) podium.SetShowcase(page == Page.Cars);
+
+        // The paint shop is a mode WITHIN the garage, so leaving the garage must leave it too —
+        // otherwise the podium stays shifted left on a page that has no swatches to justify it.
+        if (page != Page.Cars && paintOpen) SetPaintOpen(false);
 
         // Repaint on arrival rather than only at build time, because a reset can change the
         // wallet, ownership and dev mode while every page already exists.
@@ -561,6 +799,7 @@ public class MenuUI : MonoBehaviour
         // Tuned cars are progress too — and a tuned car makes "what does a new player see"
         // impossible to answer, which is the main reason this button exists.
         CarTuning.ResetAll();
+        CarColours.ResetAll();
 
         carIndex = 0;
         DisarmReset();
@@ -618,6 +857,12 @@ public class MenuUI : MonoBehaviour
         if (entries.Length == 0) return;
 
         if (podium != null) podium.Sweep(step);
+
+        // Close the paint shop on a car change. It shows what THIS car is wearing and what is
+        // selected for it, so leaving it open across a swap would show one car's paint over
+        // another car's body.
+        if (paintOpen) SetPaintOpen(false);
+
         ChooseCar((carIndex + step + entries.Length) % entries.Length);
     }
 
@@ -662,6 +907,16 @@ public class MenuUI : MonoBehaviour
             shownPrefab = car.prefab;
             podium.Show(car.prefab);
         }
+
+        // Wear the paint that was chosen for THIS car. Applied on every refresh rather than only
+        // on a rebuild, because the car is not respawned when the paint changes — the whole point
+        // of the preview is that the same instance changes colour.
+        if (podium != null) podium.Preview(CarColours.For(car.id).colour);
+
+        // Nothing to paint on a car you do not own, and offering it would raise the question of
+        // whether buying paint buys the car.
+        if (paintButton != null && !paintOpen)
+            paintButton.gameObject.SetActive(car.Owned);
 
         if (carStatus != null)
         {

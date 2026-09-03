@@ -100,6 +100,26 @@ public class CarPodium : MonoBehaviour
     /// Set when a prefab cannot be shown at all, to stop the self-heal retrying it every frame.
     /// </summary>
     bool cannotShow;
+
+    /// <summary>
+    /// Metres to slide the plinth and car sideways. NEGATIVE is screen-left. 0 is centred.
+    /// </summary>
+    /// <remarks>
+    /// Used by the paint shop, which needs the right half of the screen for swatches and moves
+    /// the car out from under them.
+    ///
+    /// **Only the plinth and the car move — never the rig.** The backdrop quad is a child of the
+    /// rig too, and it deliberately OVERFILLS the frustum; sliding it would drag the lattice off
+    /// one edge and expose the clear colour at the other.
+    ///
+    /// The shift is computed from the CAMERA'S right vector and converted into rig space, rather
+    /// than assuming which way the rig's local X points. The rig is rotated to face back at the
+    /// camera, so its local X is screen-LEFT — exactly the kind of sign that gets guessed wrong
+    /// once and then hard-coded around.
+    /// </remarks>
+    public float StageOffset { get; set; }
+
+    float stageShift;
     Material backdropMaterial;
     Transform backdrop;
     Transform limbo;
@@ -302,6 +322,26 @@ public class CarPodium : MonoBehaviour
         if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.35f);
         if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0f);
         return mat;
+    }
+
+    /// <summary>
+    /// Tint the car on the podium, so a paint can be judged before it is bought.
+    /// </summary>
+    /// <remarks>
+    /// Goes through the car's own <see cref="CarPaint"/>, which is the same component the spawner
+    /// uses in a run — so what the podium shows and what drives out of the garage cannot disagree.
+    /// It writes a MaterialPropertyBlock, so this is safe on a prefab instance and does not
+    /// instantiate a material.
+    ///
+    /// `CarPaint` is DISABLED on the podium car like everything else, which does not matter:
+    /// `Apply` is a plain method, not something that runs on Update.
+    /// </remarks>
+    public void Preview(Color colour)
+    {
+        if (current == null) return;
+
+        CarPaint paint = current.GetComponent<CarPaint>();
+        if (paint != null) paint.Apply(colour);
     }
 
     /// <summary>Put a car on the podium. Pass null to clear it.</summary>
@@ -542,6 +582,24 @@ public class CarPodium : MonoBehaviour
         // Unscaled throughout: the menu runs at timeScale 0 whenever it is reached from a
         // paused run, and a podium that stops turning there looks broken.
         settle = Mathf.Min(1f, settle + dt / Mathf.Max(0.01f, settleTime));
+
+        // Slide the stage toward wherever the paint shop wants it. Eased rather than snapped:
+        // the car moving aside is the transition INTO the paint shop, and a jump reads as the
+        // panel having shoved it.
+        if (!Mathf.Approximately(stageShift, StageOffset) || stageShift != 0f)
+        {
+            stageShift = Mathf.Lerp(stageShift, StageOffset, 1f - Mathf.Exp(-dt * 9f));
+
+            Vector3 world = (view != null ? view.transform.right : Vector3.right) * stageShift;
+            Vector3 local = transform.InverseTransformVector(world);
+
+            if (podium != null)
+                podium.transform.localPosition =
+                    new Vector3(local.x, podiumHeight * 0.5f, local.z);
+
+            if (mount != null)
+                mount.localPosition = new Vector3(local.x, podiumHeight, local.z);
+        }
 
         if (mount != null)
         {

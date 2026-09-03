@@ -364,7 +364,7 @@ public class RunScore : MonoBehaviour
              "stays. Without this the timer banks and restarts from zero every time the car " +
              "brushes anything, which on Everest is constantly.\n\n" +
              "Too high and a genuine landing that immediately bounces reads as one long jump.")]
-    public float landingGrace = 0.2f;
+    public float landingGrace = 0.35f;
 
     [Tooltip("Colour of the airtime popup once it passes the gold threshold.")]
     public Color airColour = new Color(1f, 0.78f, 0.15f);
@@ -409,7 +409,20 @@ public class RunScore : MonoBehaviour
         {
             // Wrecking someone else reads differently from being wrecked, so it is worth
             // saying which happened rather than printing the same white "+12" for both.
-            Scored?.Invoke(mine ? "+" + worth : "WRECKER  +" + worth, point,
+            //
+            // **The PvP popup is placed over the CAR THAT WAS WRECKED, not at the contact
+            // point.** One impact fires two events — your car takes damage and theirs does —
+            // and both used to land on the same contact point in the same frame, so the two
+            // popups drew on top of each other and only one was readable. Reported as "the PvP
+            // numbers do not show up"; they were showing, underneath.
+            //
+            // Over the other car is also where the eye already is, and it says WHO you wrecked
+            // rather than just that something happened.
+            Vector3 at = mine || source == null
+                ? point
+                : source.transform.position + Vector3.up * 1.6f;
+
+            Scored?.Invoke(mine ? "+" + worth : "WRECKER  +" + worth, at,
                            mine ? Color.white : pvpColour, !mine);
         }
 

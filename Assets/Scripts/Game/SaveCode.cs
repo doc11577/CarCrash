@@ -32,18 +32,44 @@ using UnityEngine;
 /// </remarks>
 public static class SaveCode
 {
-    const string Version = "C1";
+    /// <summary>
+    /// Current format. Bumped to C2 on 2026-09-02 when paint ownership and per-car paint choices
+    /// were added.
+    /// </summary>
+    const string Version = "C2";
+
+    /// <summary>
+    /// The format before paints. Still READ, never written — a code someone saved yesterday has
+    /// to keep working, and a save system that loses progress to a format change is worse than
+    /// no save system.
+    /// </summary>
+    const string LegacyVersion = "C1";
 
     /// <summary>The current progress as a code. Never returns null.</summary>
     public static string Export()
     {
+        // v2 carries THREE variable-length lists (cars, paints, car-to-paint choices), and the
+        // v1 trick of "everything between the fixed fields and the checksum is the list" cannot
+        // tell three lists apart. So the inner lists are re-joined with COMMAS and the top level
+        // stays a fixed seven fields split on '|'.
+        //
+        // That is the general fix for the bug v1 shipped with: **a delimited list inside a
+        // delimited format needs a different delimiter, not a cleverer parser.**
         string body = string.Join("|", Version,
                                        PlayerWallet.Gears.ToString(),
                                        PlayerWallet.BestRun.ToString(),
-                                       PlayerWallet.OwnedIds);
+                                       Inner(PlayerWallet.OwnedIds),
+                                       Inner(CarColours.OwnedIds),
+                                       Inner(CarColours.ChoiceIds));
 
         return ToBase64Url(Encoding.UTF8.GetBytes(body + "|" + Checksum(body)));
     }
+
+    /// <summary>Pipe-delimited as stored, comma-delimited inside a save code.</summary>
+    static string Inner(string piped) => (piped ?? "").Replace('|', ',');
+
+    /// <summary>The reverse of <see cref="Inner"/>.</summary>
+    static string Outer(string commas) => (commas ?? "").Replace(',', '|');
 
     /// <summary>
     /// Apply a code. Returns false and changes NOTHING if it is not a valid code, so a bad paste
@@ -85,14 +111,44 @@ public static class SaveCode
         // So: read the fixed fields off the front, the checksum off the back, and treat
         // everything between as the owned list, pipes and all.
         string[] parts = body.Split('|');
-        if (parts.Length < 5 || parts[0] != Version)
+        if (parts.Length < 5)
+        {
+            message = "That is not a save code.";
+            return false;
+        }
+
+        // v1: version | gears | best | owned... | checksum, where the owned list is ITSELF
+        // pipe-delimited, so the field count is not fixed. v2 moved the inner lists to commas
+        // and is a fixed seven fields. Both are read, because a code someone saved yesterday
+        // has to keep working — losing progress to a format change is the one thing a save
+        // system may not do.
+        string owned, paints, choices, signed;
+
+        if (parts[0] == Version)
+        {
+            if (parts.Length != 7)
+            {
+                message = "That code is damaged — check it was copied in full.";
+                return false;
+            }
+
+            owned = Outer(parts[3]);
+            paints = Outer(parts[4]);
+            choices = Outer(parts[5]);
+            signed = string.Join("|", parts, 0, 6);
+        }
+        else if (parts[0] == LegacyVersion)
+        {
+            owned = string.Join("|", parts, 3, parts.Length - 4);
+            paints = "";
+            choices = "";
+            signed = string.Join("|", parts, 0, parts.Length - 1);
+        }
+        else
         {
             message = "That code is from a different version of the game.";
             return false;
         }
-
-        string owned = string.Join("|", parts, 3, parts.Length - 4);
-        string signed = string.Join("|", parts, 0, parts.Length - 1);
 
         if (Checksum(signed) != parts[parts.Length - 1])
         {
@@ -108,6 +164,7 @@ public static class SaveCode
         }
 
         PlayerWallet.Restore(gears, best, owned);
+        CarColours.Restore(paints, choices);
         message = $"Restored {gears:N0} gears.";
         return true;
     }
